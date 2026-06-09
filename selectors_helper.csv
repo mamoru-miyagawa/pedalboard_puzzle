@@ -1,0 +1,25 @@
+Selector
+all
+name:DD-8
+name:SD-1
+name:BD-2
+name:CE-2
+name:TR-2
+Brand=Boss
+Color=White
+Color=Yellow
+Color=Blue
+Color=Green
+Category 1=Digital
+Category 1=Overdrive
+Category 1=Chorus
+Category 1=Tremolo
+Category 2=Delay
+Category 2=Gain
+Category 2=Modulation
+Size=M
+same:Brand
+same:Color
+same:Category 1
+same:Category 2
+same:Size

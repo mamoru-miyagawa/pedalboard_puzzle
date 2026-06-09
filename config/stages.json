@@ -1,0 +1,24 @@
+{
+  "stages": [
+    {
+      "name": "Stage 1 — Signal Flow",
+      "items": ["BD-2", "SD-1", "DD-8", "CE-2", "TR-2"],
+      "rules": [
+        {"type": "order", "by": "Category 2", "sequence": ["Gain", "Modulation", "Delay"]},
+        {"type": "group_together", "select": {"field": "Category 2", "value": "Gain"}},
+        {"type": "group_together", "select": {"field": "Category 2", "value": "Modulation"}},
+        {"type": "position", "select": {"field": "Category 2", "value": "Delay"}, "where": "edge"},
+        {"type": "no_adjacent_same", "field": "Color"}
+      ]
+    },
+    {
+      "name": "Stage 2 — Three Up",
+      "items": ["BD-2", "SD-1", "DD-8"],
+      "rules": [
+        {"type": "order", "by": "Category 2", "sequence": ["Gain", "Delay"]},
+        {"type": "position", "select": {"field": "Category 2", "value": "Delay"}, "where": "edge"},
+        {"type": "no_adjacent_same", "field": "Color"}
+      ]
+    }
+  ]
+}

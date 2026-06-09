@@ -1,0 +1,12 @@
+Stage,Stage Name,Slots,Items,Group,Description,Type,Select,To,Where,Slot,Negate,Field,Sequence,Op,Value,Region
+1,Signal Flow,,BD-2; SD-1; DD-8; CE-2; TR-2,,,order,,,,,,Category 2,Gain; Modulation; Delay
+1,,,,,,group_together,Category 2=Gain
+1,,,,,,group_together,Category 2=Modulation
+1,,,,,,position,Category 2=Delay,,edge
+1,,,,,,no_adjacent_same,,,,,,Color
+2,Three Up,,BD-2; SD-1; DD-8,,,order,,,,,,Category 2,Gain; Delay
+2,,,,,,position,Category 2=Delay,,edge
+2,,,,,,no_adjacent_same,,,,,,Color
+3,Pick Four,4,BD-2; SD-1; DD-8; CE-2; TR-2,g1,Two overdrives then the delay last,count,Category 1=Overdrive,,,,,,,eq,2,all
+3,,,,g1,,position,Category 2=Delay,,last
+3,,,,,I don't like green pedals,count,Color=Green,,,,,,,at most,0,all
