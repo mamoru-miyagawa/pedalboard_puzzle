@@ -1,19 +1,3 @@
 [remap]
 
-importer="csv_translation"
-type="Translation"
-uid="uid://br21ty10kr6fc"
-
-[deps]
-
-files=["res://stages_template.Stage Name.translation", "res://stages_template.Slots.translation", "res://stages_template.Items.translation", "res://stages_template.Group.translation", "res://stages_template.Description.translation", "res://stages_template.Type.translation", "res://stages_template.Select.translation", "res://stages_template.en.translation", "res://stages_template.Where.translation", "res://stages_template.en.translation", "res://stages_template.en.translation", "res://stages_template.Field.translation", "res://stages_template.Sequence.translation", "res://stages_template.Op.translation", "res://stages_template.Value.translation", "res://stages_template.Region.translation"]
-
-source_file="res://stages_template.csv"
-dest_files=["res://stages_template.Stage Name.translation", "res://stages_template.Slots.translation", "res://stages_template.Items.translation", "res://stages_template.Group.translation", "res://stages_template.Description.translation", "res://stages_template.Type.translation", "res://stages_template.Select.translation", "res://stages_template.en.translation", "res://stages_template.Where.translation", "res://stages_template.en.translation", "res://stages_template.en.translation", "res://stages_template.Field.translation", "res://stages_template.Sequence.translation", "res://stages_template.Op.translation", "res://stages_template.Value.translation", "res://stages_template.Region.translation"]
-
-[params]
-
-compress=1
-delimiter=0
-unescape_keys=false
-unescape_translations=true
+importer="keep"
