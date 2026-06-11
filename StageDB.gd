@@ -92,7 +92,7 @@ static func _parse_csv(path: String) -> Array:
 			continue
 
 		if not by_id.has(stage_id):
-			var st := {"name": "", "items": [], "rules": []}
+			var st := {"id": stage_id, "name": "", "items": [], "rules": []}
 			by_id[stage_id] = st
 			stages.append(st)
 		var stage: Dictionary = by_id[stage_id]

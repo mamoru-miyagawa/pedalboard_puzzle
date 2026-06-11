@@ -1,7 +1,0 @@
-[gd_scene format=3 uid="uid://cn1ftqouxxs02"]
-
-[ext_resource type="Script" uid="uid://bc3dryunxdh4u" path="res://Game3D.gd" id="1"]
-
-[node name="Game" type="Node3D" unique_id=2017273128]
-script = ExtResource("1")
-camera_position = Vector3(3, 6, 0)

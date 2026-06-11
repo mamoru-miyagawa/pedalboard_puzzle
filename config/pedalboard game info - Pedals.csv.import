@@ -1,0 +1,19 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://d24yk6ugpxpwm"
+
+[deps]
+
+files=["res://config/pedalboard game info - Pedals.Brand.translation", "res://config/pedalboard game info - Pedals.Color.translation", "res://config/pedalboard game info - Pedals.Category 1.translation", "res://config/pedalboard game info - Pedals.Category 2.translation", "res://config/pedalboard game info - Pedals.Size.translation", "res://config/pedalboard game info - Pedals.Bypass.translation", "res://config/pedalboard game info - Pedals.Era.translation", "res://config/pedalboard game info - Pedals.Power.translation", "res://config/pedalboard game info - Pedals.Extra.translation"]
+
+source_file="res://config/pedalboard game info - Pedals.csv"
+dest_files=["res://config/pedalboard game info - Pedals.Brand.translation", "res://config/pedalboard game info - Pedals.Color.translation", "res://config/pedalboard game info - Pedals.Category 1.translation", "res://config/pedalboard game info - Pedals.Category 2.translation", "res://config/pedalboard game info - Pedals.Size.translation", "res://config/pedalboard game info - Pedals.Bypass.translation", "res://config/pedalboard game info - Pedals.Era.translation", "res://config/pedalboard game info - Pedals.Power.translation", "res://config/pedalboard game info - Pedals.Extra.translation"]
+
+[params]
+
+compress=1
+delimiter=0
+unescape_keys=false
+unescape_translations=true

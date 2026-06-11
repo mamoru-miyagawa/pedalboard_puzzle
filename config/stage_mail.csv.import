@@ -1,0 +1,19 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://bnhfmtv10fylj"
+
+[deps]
+
+files=["res://config/stage_mail.Sender.translation", "res://config/stage_mail.avatar.translation", "res://config/stage_mail.sender.translation", "res://config/stage_mail.time.translation", "res://config/stage_mail.subject.translation", "res://config/stage_mail.e.translation"]
+
+source_file="res://config/stage_mail.csv"
+dest_files=["res://config/stage_mail.Sender.translation", "res://config/stage_mail.avatar.translation", "res://config/stage_mail.sender.translation", "res://config/stage_mail.time.translation", "res://config/stage_mail.subject.translation", "res://config/stage_mail.e.translation"]
+
+[params]
+
+compress=1
+delimiter=0
+unescape_keys=false
+unescape_translations=true
