@@ -251,16 +251,83 @@ var start_roll_a: Sprite2D
 var start_roll_b: Sprite2D
 var start_logo: Control
 
+# Settings.
+var settings_language := "en"   # "en" or "pt-br"
+var settings_music := true
+var settings_root: Control
+const SAVE_PATH := "user://save.cfg"
+const LANG_EN := "en"
+const LANG_PT_BR := "pt-br"
+
+# Stage selection.
+var stage_stars: Array = []        # per-stage star count (0-3)
+var stage_select_root: Control
+var stage_select_tiles: Array = []  # [{tile:Control, idx:int}] for snap logic
+var stage_select_scroll: ScrollContainer
+var stage_snap_tween: Tween
+var stage_snap_timer: float = 0.0
+var stage_last_scroll: float = 0.0
+
 func _ready() -> void:
 	item_db = ItemDB.new()
-	item_db.load_csv(ITEMS_CSV)
+	if not item_db.load_csv(ITEMS_CSV):
+		push_error("Failed to load item CSV — pedals won't appear.")
 	stages = StageDB.load_stages()
+	if stages.is_empty():
+		push_error("Failed to load any stages — objectives won't appear.")
 	_load_mail()
 	_build_world()
 	_build_ui()
 	_build_starting_screen()
+	_load_progress()
 	# Don't show stage 0 yet — the starting screen is shown first.
 	# show_stage(0)
+
+# --- Save / Load ----------------------------------------------------------
+func _save_progress() -> void:
+	var cfg := ConfigFile.new()
+	var prev: int = _get_saved_stage()
+	var hi: int = max(current_stage, prev)
+	cfg.set_value("progress", "highest_stage", hi)
+	# Record 3 stars for the just-completed stage.
+	if stage_stars.size() <= current_stage:
+		stage_stars.resize(current_stage + 1)
+	stage_stars[current_stage] = 3
+	for i in range(hi + 1):
+		cfg.set_value("progress", "stage_%d_stars" % i, stage_stars[i] if i < stage_stars.size() else 0)
+	cfg.set_value("settings", "language", settings_language)
+	cfg.set_value("settings", "music", settings_music)
+	cfg.save(SAVE_PATH)
+
+func _get_saved_stage() -> int:
+	var cfg := ConfigFile.new()
+	if cfg.load(SAVE_PATH) != OK:
+		return 0
+	return cfg.get_value("progress", "highest_stage", 0) as int
+
+func _load_progress() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(SAVE_PATH) != OK:
+		return
+	settings_language = cfg.get_value("settings", "language", "en") as String
+	settings_music = cfg.get_value("settings", "music", true) as bool
+	# Load per-stage stars.
+	var hi: int = cfg.get_value("progress", "highest_stage", 0)
+	stage_stars.resize(hi + 1)
+	for i in range(hi + 1):
+		stage_stars[i] = cfg.get_value("progress", "stage_%d_stars" % i, 0) as int
+
+func _save_settings_only() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(SAVE_PATH) == OK:
+		# Preserve existing progress keys.
+		var st: int = cfg.get_value("progress", "highest_stage", 0)
+		cfg.set_value("progress", "highest_stage", st)
+		for i in range(st + 1):
+			cfg.set_value("progress", "stage_%d_stars" % i, cfg.get_value("progress", "stage_%d_stars" % i, 0) as int)
+	cfg.set_value("settings", "language", settings_language)
+	cfg.set_value("settings", "music", settings_music)
+	cfg.save(SAVE_PATH)
 
 # --- World / board ----------------------------------------------------------
 func _build_world() -> void:
@@ -742,6 +809,16 @@ func _process(delta: float) -> void:
 		_update_snap_highlight()
 	for nm in pieces:
 		_update_wobble(pieces[nm], delta)
+	# Stage selection snap timer.
+	if stage_select_root and stage_select_root.visible and stage_select_scroll:
+		var sh: float = stage_select_scroll.scroll_horizontal
+		if sh != stage_last_scroll:
+			stage_last_scroll = sh
+			stage_snap_timer = 0.18
+		elif stage_snap_timer > 0.0:
+			stage_snap_timer -= delta
+			if stage_snap_timer <= 0.0:
+				_snap_nearest()
 
 # Highlight the slot the dragged pedal would snap into, clearing the previous one.
 func _update_snap_highlight() -> void:
@@ -1307,6 +1384,9 @@ func _build_results(bold_font) -> void:
 	var replay := _make_game_button("Replay", CARD_BG, CARD_INK, bold_font)
 	replay.pressed.connect(_on_results_replay)
 	btn_row.add_child(replay)
+	var stages_btn := _make_game_button("Stages", Color("#8b7fc7"), Color.WHITE, bold_font)
+	stages_btn.pressed.connect(_on_results_stages)
+	btn_row.add_child(stages_btn)
 	var next := _make_game_button("Next Stage", PROGRESS_FILL, Color.WHITE, bold_font)
 	next.pressed.connect(_on_results_continue)
 	btn_row.add_child(next)
@@ -1379,6 +1459,16 @@ func _on_results_replay() -> void:
 	_close_results()
 	_transition_to_stage(current_stage)   # replay the same stage
 
+func _on_results_stages() -> void:
+	_close_results()
+	if stage_select_root == null:
+		_build_stage_select()
+	# Refresh tiles in case progress changed.
+	_refresh_stage_tiles()
+	stage_select_root.visible = true
+	# Snap to the current/latest unlocked stage on open.
+	call_deferred("_snap_to_stage", min(_get_saved_stage() + 1, stages.size() - 1))
+
 # Animate the results screen away: dim fades out, card slides right, mail+tracker return.
 func _close_results() -> void:
 	if results_seq_tween != null and results_seq_tween.is_valid():
@@ -1414,12 +1504,226 @@ func _close_results() -> void:
 		results_root.visible = false
 	)
 
+# --- Stage selection screen -------------------------------------------------
+func _build_stage_select() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 9
+	add_child(layer)
+
+	stage_select_root = Control.new()
+	stage_select_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	stage_select_root.visible = false
+	layer.add_child(stage_select_root)
+
+	# Full-screen dark background, matching the starting screen.
+	var bg := ColorRect.new()
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color("#363750")
+	stage_select_root.add_child(bg)
+
+	var st_bold := load(FONT_BOLD)
+	var st_xbold := load(FONT_XBOLD)
+
+	# Title at the top.
+	var title := Label.new()
+	title.text = "Stage Selection"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 48)
+	title.add_theme_color_override("font_color", Color.WHITE)
+	if st_xbold:
+		title.add_theme_font_override("font", st_xbold)
+	title.set_anchors_preset(Control.PRESET_CENTER)
+	title.offset_left = -300
+	title.offset_right = 300
+	title.offset_top = DESIGN.y * -0.5 + 40
+	title.offset_bottom = title.offset_top + 64
+	stage_select_root.add_child(title)
+
+	# Horizontal scroll area for the stage tiles.
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_CENTER)
+	scroll.offset_left = -DESIGN.x * 0.4
+	scroll.offset_right = DESIGN.x * 0.4
+	scroll.offset_top = -90
+	scroll.offset_bottom = 90
+	scroll.follow_focus = true
+	scroll.add_theme_stylebox_override("scroll", StyleBoxEmpty.new())
+	stage_select_scroll = scroll
+	stage_select_root.add_child(scroll)
+
+	stage_select_tiles.clear()
+	var tiles_row := HBoxContainer.new()
+	tiles_row.add_theme_constant_override("separation", 28)
+	tiles_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	tiles_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	scroll.add_child(tiles_row)
+
+	# Side spacers so the first and last tiles can scroll to centre.
+	var pad_w: float = scroll.offset_right - scroll.offset_left
+	var tile_w := 140.0
+	var side_pad: float = pad_w * 0.5 - tile_w * 0.5
+	var lpad := Control.new()
+	lpad.custom_minimum_size = Vector2(side_pad, 0)
+	tiles_row.add_child(lpad)
+
+	var n_stages: int = stages.size()
+	var unlocked: int = _get_saved_stage() + 1   # stage N+1 unlocks after completing N
+	for i in range(n_stages):
+		var tile_idx := i
+		var tile := VBoxContainer.new()
+		tile.add_theme_constant_override("separation", 8)
+		tile.alignment = BoxContainer.ALIGNMENT_CENTER
+		_build_tile_contents(tile, i + 1, tile_idx <= unlocked)
+		# Let drags through to the ScrollContainer; clicks land here.
+		tile.mouse_filter = Control.MOUSE_FILTER_PASS
+		tile.gui_input.connect(_on_tile_gui.bind(tile_idx))
+		tiles_row.add_child(tile)
+		stage_select_tiles.append({"tile": tile, "idx": tile_idx})
+
+	# Right spacer — mirrors the left one.
+	var rpad := Control.new()
+	rpad.custom_minimum_size = Vector2(side_pad, 0)
+	tiles_row.add_child(rpad)
+
+	# Back button at the bottom.
+	var back_btn := _make_game_button("Back", Color("#6a6a8a"), Color.WHITE, st_bold)
+	back_btn.custom_minimum_size = Vector2(220, 54)
+	back_btn.add_theme_font_size_override("font_size", 22)
+	back_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	back_btn.set_anchors_preset(Control.PRESET_CENTER)
+	back_btn.offset_left = -110
+	back_btn.offset_right = 110
+	back_btn.offset_top = DESIGN.y * 0.5 - 90
+	back_btn.offset_bottom = back_btn.offset_top + 54
+	back_btn.pressed.connect(func(): stage_select_root.visible = false)
+	stage_select_root.add_child(back_btn)
+
+func _refresh_stage_tiles() -> void:
+	if stage_select_root == null:
+		return
+	var unlocked: int = _get_saved_stage() + 1
+	for i in range(stage_select_tiles.size()):
+		if i >= stages.size():
+			break
+		var tile: Control = stage_select_tiles[i]["tile"]
+		var idx: int = stage_select_tiles[i]["idx"]
+		# Rebuild the tile contents.
+		for c in tile.get_children():
+			c.queue_free()
+		_build_tile_contents(tile, idx + 1, idx <= unlocked)
+
+func _build_tile_contents(tile: Control, stage_num: int, unlocked: bool) -> void:
+	var tile_size := 140.0
+
+	var square := Panel.new()
+	square.custom_minimum_size = Vector2(tile_size, tile_size)
+	var sq_sb := StyleBoxFlat.new()
+	if unlocked:
+		sq_sb.bg_color = Color("#eae4d3")
+		sq_sb.border_color = CARD_BAND
+	else:
+		sq_sb.bg_color = Color("#4a4868")
+		sq_sb.border_color = Color("#5d5b78")
+	sq_sb.set_corner_radius_all(16)
+	sq_sb.set_border_width_all(3)
+	square.add_theme_stylebox_override("panel", sq_sb)
+	tile.add_child(square)
+
+	if unlocked:
+		var num_label := Label.new()
+		num_label.text = str(stage_num)
+		num_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		num_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		num_label.add_theme_font_size_override("font_size", 52)
+		num_label.add_theme_color_override("font_color", CARD_INK)
+		num_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var bld := load(FONT_BOLD)
+		if bld:
+			num_label.add_theme_font_override("font", bld)
+		square.add_child(num_label)
+
+		var star_row := HBoxContainer.new()
+		star_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		star_row.add_theme_constant_override("separation", 3)
+		var stars: int = stage_stars[stage_num - 1] if stage_num - 1 < stage_stars.size() else 0
+		for _si in range(3):
+			var s := Label.new()
+			s.text = "★" if _si < stars else "☆"
+			s.add_theme_font_size_override("font_size", 18)
+			s.add_theme_color_override("font_color", Color("#f2c14e"))
+			star_row.add_child(s)
+		tile.add_child(star_row)
+	else:
+		var lock_label := Label.new()
+		lock_label.text = "🔒"
+		lock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lock_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lock_label.add_theme_font_size_override("font_size", 32)
+		lock_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		square.add_child(lock_label)
+
+func _on_stage_tile_clicked(idx: int) -> void:
+	# If already centred — select it. Otherwise, snap to centre first.
+	if _is_tile_centred(idx):
+		stage_select_root.visible = false
+		_transition_to_stage(idx)
+	else:
+		_snap_to_stage(idx)
+
+func _on_tile_gui(event: InputEvent, idx: int) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_on_stage_tile_clicked(idx)
+
+func _is_tile_centred(idx: int) -> bool:
+	if stage_select_scroll == null:
+		return false
+	var view_w: float = stage_select_scroll.offset_right - stage_select_scroll.offset_left
+	var tile_w := 140.0
+	var gap := 28.0
+	var left_pad: float = view_w * 0.5 - tile_w * 0.5
+	var tile_cx: float = left_pad + float(idx) * (tile_w + gap) + tile_w * 0.5
+	var target: float = tile_cx - view_w * 0.5
+	return abs(stage_select_scroll.scroll_horizontal - target) < 4.0
+
+func _snap_nearest() -> void:
+	if stage_select_scroll == null or stage_select_tiles.is_empty():
+		return
+	var view_w: float = stage_select_scroll.offset_right - stage_select_scroll.offset_left
+	var view_cx: float = stage_select_scroll.scroll_horizontal + view_w * 0.5
+	var best_idx := 0
+	var best_dist: float = INF
+	var tile_w := 140.0
+	var gap := 28.0
+	var left_pad: float = view_w * 0.5 - tile_w * 0.5
+	for i in range(stage_select_tiles.size()):
+		var tile_cx: float = left_pad + float(i) * (tile_w + gap) + tile_w * 0.5
+		var d: float = abs(tile_cx - view_cx)
+		if d < best_dist:
+			best_dist = d
+			best_idx = i
+	_snap_to_stage(best_idx)
+
+func _snap_to_stage(tile_idx: int) -> void:
+	if stage_select_scroll == null or tile_idx < 0 or tile_idx >= stage_select_tiles.size():
+		return
+	var tile_w := 140.0
+	var gap := 28.0
+	var view_w: float = stage_select_scroll.offset_right - stage_select_scroll.offset_left
+	var left_pad: float = view_w * 0.5 - tile_w * 0.5
+	var tile_cx: float = left_pad + float(tile_idx) * (tile_w + gap) + tile_w * 0.5
+	var target_scroll: float = tile_cx - view_w * 0.5
+	if stage_snap_tween and stage_snap_tween.is_valid():
+		stage_snap_tween.kill()
+	stage_snap_tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	stage_snap_tween.tween_property(stage_select_scroll, "scroll_horizontal", target_scroll, 0.22)
+
 # Populate and show the stage-complete email: requester avatar/name + a thank-you
 # that reuses the stage's request text, then play the rating-star fill.
 # The sequence: mail icon slides right, tracker sinks, dim fades in, card slides in.
 func _show_results() -> void:
 	if results_root == null:
 		return
+	_save_progress()
 	var sid := String(stages[current_stage].get("id", str(current_stage + 1)))
 	var m: Dictionary = mail_by_stage.get(sid, {})
 	if results_avatar:
@@ -2567,9 +2871,246 @@ func _on_start_pressed() -> void:
 		return
 	_transition_to_stage(0)
 
+# --- Settings dialog -------------------------------------------------------
+func _build_settings() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 8
+	add_child(layer)
+
+	settings_root = Control.new()
+	settings_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	settings_root.visible = false
+	layer.add_child(settings_root)
+
+	# Dim backdrop.
+	var dim := ColorRect.new()
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0, 0, 0, 0.45)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.gui_input.connect(_on_settings_dim_click)
+	settings_root.add_child(dim)
+
+	# Card.
+	var card_w := 400.0
+	var card_h := 320.0
+	var card := Panel.new()
+	card.set_anchors_preset(Control.PRESET_CENTER)
+	card.offset_left = -card_w * 0.5
+	card.offset_right = card_w * 0.5
+	card.offset_top = -card_h * 0.5
+	card.offset_bottom = card_h * 0.5
+	var card_sb := StyleBoxFlat.new()
+	card_sb.bg_color = CARD_BG
+	card_sb.set_corner_radius_all(18)
+	card_sb.set_border_width_all(3)
+	card_sb.border_color = CARD_INK
+	card.add_theme_stylebox_override("panel", card_sb)
+	settings_root.add_child(card)
+	_add_card_shadow(card, 14, 16, 18)
+
+	# Header bar (tan).
+	var header := Panel.new()
+	header.custom_minimum_size = Vector2(card_w, 52)
+	var hdr_sb := StyleBoxFlat.new()
+	hdr_sb.bg_color = CARD_HEADER_TAN
+	hdr_sb.set_corner_radius_all(18)
+	hdr_sb.corner_radius_bottom_left = 0
+	hdr_sb.corner_radius_bottom_right = 0
+	header.add_theme_stylebox_override("panel", hdr_sb)
+	card.add_child(header)
+
+	var hdr_row := HBoxContainer.new()
+	hdr_row.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hdr_row.add_theme_constant_override("margin_left", 16)
+	hdr_row.add_theme_constant_override("margin_right", 12)
+	hdr_row.add_theme_constant_override("margin_top", 12)
+	hdr_row.add_theme_constant_override("margin_bottom", 12)
+	hdr_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_child(hdr_row)
+
+	var hdr_label := Label.new()
+	hdr_label.text = "Settings"
+	hdr_label.add_theme_color_override("font_color", CARD_INK)
+	hdr_label.add_theme_font_size_override("font_size", 20)
+	hdr_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var st_bold := load(FONT_BOLD)
+	if st_bold:
+		hdr_label.add_theme_font_override("font", st_bold)
+	hdr_row.add_child(hdr_label)
+
+	# Close (X) button.
+	var close_btn := Button.new()
+	close_btn.text = "✕"
+	close_btn.custom_minimum_size = Vector2(32, 32)
+	close_btn.add_theme_font_size_override("font_size", 18)
+	close_btn.add_theme_color_override("font_color", CARD_INK)
+	var cb_sb := StyleBoxFlat.new()
+	cb_sb.bg_color = Color(0, 0, 0, 0)
+	cb_sb.set_corner_radius_all(16)
+	close_btn.add_theme_stylebox_override("normal", cb_sb)
+	var cb_hover := StyleBoxFlat.new()
+	cb_hover.bg_color = Color(0, 0, 0, 0.08)
+	cb_hover.set_corner_radius_all(16)
+	close_btn.add_theme_stylebox_override("hover", cb_hover)
+	close_btn.pressed.connect(_on_settings_close)
+	hdr_row.add_child(close_btn)
+
+	# Body.
+	var body := VBoxContainer.new()
+	body.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	body.offset_top = 56
+	body.offset_bottom = -16
+	body.add_theme_constant_override("margin_left", 28)
+	body.add_theme_constant_override("margin_right", 28)
+	body.add_theme_constant_override("separation", 12)
+	card.add_child(body)
+
+	# --- Language row --------------------------------------------------------
+	var lang_row := HBoxContainer.new()
+	lang_row.add_theme_constant_override("separation", 10)
+	var lang_label := Label.new()
+	lang_label.text = "Language"
+	lang_label.add_theme_color_override("font_color", CARD_INK)
+	lang_label.add_theme_font_size_override("font_size", 18)
+	lang_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lang_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	lang_row.add_child(lang_label)
+
+	var en_btn := _make_settings_toggle("EN")
+	en_btn.pressed.connect(_on_lang_en)
+	lang_row.add_child(en_btn)
+
+	var pt_btn := _make_settings_toggle("PT-BR")
+	pt_btn.pressed.connect(_on_lang_pt)
+	lang_row.add_child(pt_btn)
+	body.add_child(lang_row)
+
+	_update_lang_toggles(en_btn, pt_btn)
+
+	# --- Divider -------------------------------------------------------------
+	body.add_child(_hline(CARD_DIVIDER, 1))
+
+	# --- Music row -----------------------------------------------------------
+	var music_row := HBoxContainer.new()
+	music_row.add_theme_constant_override("separation", 10)
+	var music_label := Label.new()
+	music_label.text = "Music"
+	music_label.add_theme_color_override("font_color", CARD_INK)
+	music_label.add_theme_font_size_override("font_size", 18)
+	music_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	music_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	music_row.add_child(music_label)
+
+	var music_cb := CheckBox.new()
+	music_cb.button_pressed = settings_music
+	music_cb.add_theme_color_override("font_color", CARD_INK)
+	music_cb.add_theme_font_size_override("font_size", 16)
+	music_cb.toggled.connect(_on_music_toggled)
+	music_row.add_child(music_cb)
+	body.add_child(music_row)
+
+	# --- Clear progress (debug) -----------------------------------------------
+	var clear_btn := Button.new()
+	clear_btn.text = "Clear progress"
+	clear_btn.add_theme_font_size_override("font_size", 13)
+	clear_btn.add_theme_color_override("font_color", CARD_INK_SOFT)
+	clear_btn.add_theme_color_override("font_hover_color", Color("#c8554f"))
+	var clr_sb := StyleBoxFlat.new()
+	clr_sb.bg_color = Color(0, 0, 0, 0)
+	clear_btn.add_theme_stylebox_override("normal", clr_sb)
+	clear_btn.add_theme_stylebox_override("hover", clr_sb)
+	clear_btn.pressed.connect(_on_clear_progress)
+	body.add_child(clear_btn)
+
+	# --- Spacer --------------------------------------------------------------
+	var spacer2 := Control.new()
+	spacer2.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(spacer2)
+
+	# --- Bottom buttons ------------------------------------------------------
+	var bot_row := HBoxContainer.new()
+	bot_row.alignment = BoxContainer.ALIGNMENT_END
+	var back_btn := _make_settings_button("Back")
+	back_btn.pressed.connect(_on_settings_close)
+	bot_row.add_child(back_btn)
+	body.add_child(bot_row)
+
+func _make_settings_toggle(text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(68, 36)
+	b.toggle_mode = true
+	b.add_theme_font_size_override("font_size", 16)
+	b.add_theme_color_override("font_color", CARD_INK)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color("#eae4d3")
+	sb.set_corner_radius_all(10)
+	sb.set_border_width_all(2)
+	sb.border_color = CARD_DIVIDER
+	b.add_theme_stylebox_override("normal", sb)
+	var sb_pressed := StyleBoxFlat.new()
+	sb_pressed.bg_color = CARD_HEADER_TAN
+	sb_pressed.set_corner_radius_all(10)
+	sb_pressed.set_border_width_all(2)
+	sb_pressed.border_color = CARD_BAND
+	b.add_theme_stylebox_override("pressed", sb_pressed)
+	return b
+
+func _update_lang_toggles(en_btn: Button, pt_btn: Button) -> void:
+	en_btn.button_pressed = (settings_language == LANG_EN)
+	pt_btn.button_pressed = (settings_language == LANG_PT_BR)
+
+func _make_settings_button(text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(110, 40)
+	b.add_theme_font_size_override("font_size", 16)
+	b.add_theme_color_override("font_color", CARD_INK)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color("#d9d3c4")
+	sb.set_corner_radius_all(12)
+	sb.set_border_width_all(2)
+	sb.border_color = CARD_INK
+	b.add_theme_stylebox_override("normal", sb)
+	var sb_hover := StyleBoxFlat.new()
+	sb_hover.bg_color = Color("#ccc6b4")
+	sb_hover.set_corner_radius_all(12)
+	sb_hover.set_border_width_all(2)
+	sb_hover.border_color = CARD_INK
+	b.add_theme_stylebox_override("hover", sb_hover)
+	return b
+
+func _on_settings_close() -> void:
+	if settings_root:
+		settings_root.visible = false
+
+func _on_settings_dim_click(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		_on_settings_close()
+
+func _on_lang_en() -> void:
+	settings_language = LANG_EN
+	_save_settings_only()
+
+func _on_lang_pt() -> void:
+	settings_language = LANG_PT_BR
+	_save_settings_only()
+
+func _on_music_toggled(on: bool) -> void:
+	settings_music = on
+	_save_settings_only()
+
+func _on_clear_progress() -> void:
+	DirAccess.remove_absolute(SAVE_PATH)
+	stage_stars.clear()
+	current_stage = 0
+	stage_complete = false
+	_on_settings_close()
+
 func _on_settings_pressed() -> void:
-	# Placeholder: no settings implemented yet.
-	pass
+	if settings_root == null:
+		_build_settings()
+	settings_root.visible = true
 
 func _on_reset() -> void:
 	dragging = null

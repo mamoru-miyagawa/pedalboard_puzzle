@@ -44,11 +44,14 @@ static func load_stages() -> Array:
 	return _parse_json("res://config/stages.json")
 
 static func _find_csv() -> String:
-	# Fixed names first — reliable in exported (web) builds where directory
-	# listing can be flaky — then fall back to scanning the folder.
+	# Try fixed names — open directly since file_exists can be unreliable on web.
 	for guess in ["res://config/stages.csv", "res://config/Stages.csv"]:
-		if FileAccess.file_exists(guess):
+		var f := FileAccess.open(guess, FileAccess.READ)
+		if f != null:
+			f.close()
 			return guess
+	# Fallback: scan the config directory (won't work in web, but DirAccess.open
+	# safely returns null there so we just fall through to JSON).
 	var d := DirAccess.open("res://config")
 	if d == null:
 		return ""
