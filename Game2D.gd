@@ -2232,7 +2232,8 @@ func _acked_count() -> int:
 func _load_mail() -> void:
 	var f := FileAccess.open(MAIL_CSV, FileAccess.READ)
 	if f == null:
-		push_warning("stage_mail.csv not found: %s" % MAIL_CSV)
+		push_warning("stage_mail.csv not found: %s — using built-in fallback." % MAIL_CSV)
+		_load_mail_fallback()
 		return
 	var cols: Array = []
 	for h in f.get_csv_line():
@@ -2248,6 +2249,15 @@ func _load_mail() -> void:
 		if sid != "":
 			mail_by_stage[sid] = rec
 	f.close()
+
+# Hardcoded fallback so mail content is always available even if the CSV is
+# missing from the export pck.
+func _load_mail_fallback() -> void:
+	mail_by_stage = {
+		"1": {"stage id":"1","sender_name":"Mika","avatar":"avatar","sender_address":"mika@email.com","time":"just now","subject":"re: my pedalboard order","e-mail":"Hey! Thanks for taking this!! Here are the things I want:"},
+		"2": {"stage id":"2","sender_name":"Chad","avatar":"avatar","sender_address":"chad@chadson.com","time":"yesterday 14:11","subject":"need help!","e-mail":"Hi, I need help to build my board. I want it very minimal."},
+		"3": {"stage id":"3","sender_name":"Mike","avatar":"avatar","sender_address":"mic.the.mike@mikemike.com","time":"13:32","subject":"Mika sent me","e-mail":"Hei, Mika told me you do a great job so I wanted to comission my board to you, hope to hear back from you!"},
+	}
 
 # Fill the inbox card from the email for this stage id.
 func _apply_mail(sid: String) -> void:
