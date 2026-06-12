@@ -41,7 +41,10 @@ static func load_stages() -> Array:
 		var arr := _parse_csv(csv)
 		if not arr.is_empty():
 			return arr
-	return _parse_json("res://config/stages.json")
+	var from_json := _parse_json("res://config/stages.json")
+	if not from_json.is_empty():
+		return from_json
+	return _parse_fallback()
 
 static func _find_csv() -> String:
 	# Try fixed names — open directly since file_exists can be unreliable on web.
@@ -71,6 +74,54 @@ static func _parse_json(path: String) -> Array:
 		return data["stages"]
 	if typeof(data) == TYPE_ARRAY:
 		return data
+	return []
+
+# Hardcoded fallback data so the game always has stages even if config files
+# are missing from the export pck.
+static func _parse_fallback() -> Array:
+	var json_text := """{
+  "stages": [
+    {
+      "id": "1",
+      "name": "Stage 1 — Signal Flow",
+      "slots": 5,
+      "items": ["BD-2", "SD-1", "DD-8", "CE-2", "TR-2"],
+      "rules": [
+        {"type": "order", "by": "Category 2", "sequence": ["Gain", "Modulation", "Delay"]},
+        {"type": "group_together", "select": {"field": "Category 2", "value": "Gain"}},
+        {"type": "group_together", "select": {"field": "Category 2", "value": "Modulation"}},
+        {"type": "position", "select": {"field": "Category 2", "value": "Delay"}, "where": "last"},
+        {"type": "no_adjacent_same", "field": "Color"}
+      ]
+    },
+    {
+      "id": "2",
+      "name": "Stage 2 — Three Up",
+      "slots": 3,
+      "items": ["BD-2", "SD-1", "DD-8", "CE-2", "TR-2"],
+      "rules": [
+        {"type": "order", "by": "Category 2", "sequence": ["Gain", "Delay"]},
+        {"type": "position", "select": {"field": "Category 2", "value": "Delay"}, "where": "last"},
+        {"type": "count", "select": {"field": "Color", "value": "Yellow"}, "op": "<=", "value": 0, "region": "all"}
+      ]
+    },
+    {
+      "id": "3",
+      "name": "Stage 3 — Pick Four",
+      "slots": 4,
+      "items": ["BD-2", "SD-1", "DD-8", "CE-2", "TR-2"],
+      "rules": [
+        {"type": "count", "select": {"field": "Category 1", "value": "Overdrive"}, "op": "==", "value": 2, "region": "all"},
+        {"type": "position", "select": {"field": "Category 2", "value": "Delay"}, "where": "last"},
+        {"type": "count", "select": {"field": "Color", "value": "Green"}, "op": "<=", "value": 0, "region": "all"},
+        {"type": "count", "select": {"field": "Category 2", "value": "Modulation"}, "op": "==", "value": 1, "region": "all"}
+      ]
+    }
+  ]
+}"""
+	var data = JSON.parse_string(json_text)
+	if typeof(data) == TYPE_DICTIONARY and data.has("stages"):
+		return data["stages"]
 	return []
 
 static func _parse_csv(path: String) -> Array:
