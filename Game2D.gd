@@ -52,6 +52,7 @@ const MAIL_SHADOW_OFFSET := Vector2(3, 6)   # drop shadow under the icon (button
 const MAIL_DOT_SIZE := 18.0                 # red notification badge diameter
 const MAIL_DOT_COLOR := Color("#e6483d")
 
+const GAME_VERSION := "0.01"
 const ICON_PASS := "res://assets/ui/icon_pass.png"
 const ICON_FAIL := "res://assets/ui/icon_fail.png"
 const ICON_PENDING := "res://assets/ui/icon_pending.png"
@@ -255,6 +256,12 @@ var start_logo: Control
 var settings_language := "en"   # "en" or "pt-br"
 var settings_music := true
 var settings_root: Control
+var settings_hdr_label: Label
+var settings_body_margin: MarginContainer
+var settings_content: VBoxContainer
+var _credits_content: VBoxContainer
+var lang_en_btn: Button
+var lang_pt_btn: Button
 const SAVE_PATH := "user://save.cfg"
 const LANG_EN := "en"
 const LANG_PT_BR := "pt-br"
@@ -638,8 +645,8 @@ func _make_piece(item: Dictionary) -> Piece2D:
 
 	# Pedal name + Category 1 as crisp labels on the label layer, positioned
 	# under the pedal each frame in _update_piece_labels.
-	piece.name_label = _make_piece_label(piece.char_id, 18, Color.WHITE)
-	piece.cat_label = _make_piece_label(String(item.get("Category 1", "")), 13, Color("#c8c8d0"))
+	piece.name_label = _make_piece_label(piece.char_id, 18, CARD_INK)
+	piece.cat_label = _make_piece_label(String(item.get("Category 1", "")), 13, CARD_INK)
 	piece_label_root.add_child(piece.name_label)
 	piece_label_root.add_child(piece.cat_label)
 	return piece
@@ -948,6 +955,17 @@ func _build_ui() -> void:
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(margin)
 	hud_margin = margin
+
+	# Version label — bottom-right, always visible.
+	var ver := Label.new()
+	ver.text = "v" + GAME_VERSION
+	ver.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	ver.offset_left = -80
+	ver.offset_top = -28
+	ver.add_theme_font_size_override("font_size", 14)
+	ver.add_theme_color_override("font_color", CARD_INK_SOFT)
+	ver.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(ver)
 
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 8)
@@ -2892,6 +2910,8 @@ func _build_settings() -> void:
 	settings_root.visible = false
 	layer.add_child(settings_root)
 
+	var bold_font = load(FONT_BOLD)
+
 	# Dim backdrop.
 	var dim := ColorRect.new()
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -2900,9 +2920,9 @@ func _build_settings() -> void:
 	dim.gui_input.connect(_on_settings_dim_click)
 	settings_root.add_child(dim)
 
-	# Card.
-	var card_w := 400.0
-	var card_h := 320.0
+	# Card — centered with explicit size, big enough for both views.
+	var card_w := 420.0
+	var card_h := 420.0
 	var card := Panel.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
 	card.offset_left = -card_w * 0.5
@@ -2918,66 +2938,58 @@ func _build_settings() -> void:
 	settings_root.add_child(card)
 	_add_card_shadow(card, 14, 16, 18)
 
+	var card_vbox := VBoxContainer.new()
+	card_vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	card.add_child(card_vbox)
+
 	# Header bar (tan).
 	var header := Panel.new()
-	header.custom_minimum_size = Vector2(card_w, 52)
+	header.custom_minimum_size = Vector2(card_w, 48)
 	var hdr_sb := StyleBoxFlat.new()
 	hdr_sb.bg_color = CARD_HEADER_TAN
 	hdr_sb.set_corner_radius_all(18)
 	hdr_sb.corner_radius_bottom_left = 0
 	hdr_sb.corner_radius_bottom_right = 0
 	header.add_theme_stylebox_override("panel", hdr_sb)
-	card.add_child(header)
+	card_vbox.add_child(header)
+
+	var hdr_margin := MarginContainer.new()
+	hdr_margin.add_theme_constant_override("margin_left", 32)
+	hdr_margin.add_theme_constant_override("margin_right", 32)
+	hdr_margin.add_theme_constant_override("margin_top", 12)
+	hdr_margin.add_theme_constant_override("margin_bottom", 12)
+	header.add_child(hdr_margin)
 
 	var hdr_row := HBoxContainer.new()
-	hdr_row.set_anchors_preset(Control.PRESET_FULL_RECT)
-	hdr_row.add_theme_constant_override("margin_left", 16)
-	hdr_row.add_theme_constant_override("margin_right", 12)
-	hdr_row.add_theme_constant_override("margin_top", 12)
-	hdr_row.add_theme_constant_override("margin_bottom", 12)
-	hdr_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	header.add_child(hdr_row)
+	hdr_row.add_theme_constant_override("separation", 8)
+	hdr_margin.add_child(hdr_row)
 
-	var hdr_label := Label.new()
-	hdr_label.text = "Settings"
-	hdr_label.add_theme_color_override("font_color", CARD_INK)
-	hdr_label.add_theme_font_size_override("font_size", 20)
-	hdr_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var st_bold := load(FONT_BOLD)
-	if st_bold:
-		hdr_label.add_theme_font_override("font", st_bold)
-	hdr_row.add_child(hdr_label)
+	settings_hdr_label = Label.new()
+	settings_hdr_label.text = "Settings"
+	settings_hdr_label.add_theme_color_override("font_color", CARD_INK)
+	settings_hdr_label.add_theme_font_size_override("font_size", 20)
+	settings_hdr_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if bold_font:
+		settings_hdr_label.add_theme_font_override("font", bold_font)
+	hdr_row.add_child(settings_hdr_label)
 
-	# Close (X) button.
-	var close_btn := Button.new()
-	close_btn.text = "✕"
-	close_btn.custom_minimum_size = Vector2(32, 32)
-	close_btn.add_theme_font_size_override("font_size", 18)
-	close_btn.add_theme_color_override("font_color", CARD_INK)
-	var cb_sb := StyleBoxFlat.new()
-	cb_sb.bg_color = Color(0, 0, 0, 0)
-	cb_sb.set_corner_radius_all(16)
-	close_btn.add_theme_stylebox_override("normal", cb_sb)
-	var cb_hover := StyleBoxFlat.new()
-	cb_hover.bg_color = Color(0, 0, 0, 0.08)
-	cb_hover.set_corner_radius_all(16)
-	close_btn.add_theme_stylebox_override("hover", cb_hover)
-	close_btn.pressed.connect(_on_settings_close)
-	hdr_row.add_child(close_btn)
+	# Body — wrapped in MarginContainer for clean padding.
+	settings_body_margin = MarginContainer.new()
+	settings_body_margin.add_theme_constant_override("margin_left", 32)
+	settings_body_margin.add_theme_constant_override("margin_right", 32)
+	settings_body_margin.add_theme_constant_override("margin_top", 12)
+	settings_body_margin.add_theme_constant_override("margin_bottom", 20)
+	settings_body_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	settings_body_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card_vbox.add_child(settings_body_margin)
 
-	# Body.
-	var body := VBoxContainer.new()
-	body.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	body.offset_top = 56
-	body.offset_bottom = -16
-	body.add_theme_constant_override("margin_left", 28)
-	body.add_theme_constant_override("margin_right", 28)
-	body.add_theme_constant_override("separation", 12)
-	card.add_child(body)
+	settings_content = VBoxContainer.new()
+	settings_content.add_theme_constant_override("separation", 18)
+	settings_body_margin.add_child(settings_content)
 
 	# --- Language row --------------------------------------------------------
 	var lang_row := HBoxContainer.new()
-	lang_row.add_theme_constant_override("separation", 10)
+	lang_row.add_theme_constant_override("separation", 12)
 	var lang_label := Label.new()
 	lang_label.text = "Language"
 	lang_label.add_theme_color_override("font_color", CARD_INK)
@@ -2986,23 +2998,27 @@ func _build_settings() -> void:
 	lang_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	lang_row.add_child(lang_label)
 
-	var en_btn := _make_settings_toggle("EN")
-	en_btn.pressed.connect(_on_lang_en)
-	lang_row.add_child(en_btn)
+	lang_en_btn = _make_game_button("EN", CARD_BG, CARD_INK, bold_font)
+	lang_en_btn.toggle_mode = true
+	lang_en_btn.custom_minimum_size = Vector2(80, 42)
+	lang_en_btn.pressed.connect(_on_lang_en)
+	lang_row.add_child(lang_en_btn)
 
-	var pt_btn := _make_settings_toggle("PT-BR")
-	pt_btn.pressed.connect(_on_lang_pt)
-	lang_row.add_child(pt_btn)
-	body.add_child(lang_row)
+	lang_pt_btn = _make_game_button("PT-BR", CARD_BG, CARD_INK, bold_font)
+	lang_pt_btn.toggle_mode = true
+	lang_pt_btn.custom_minimum_size = Vector2(80, 42)
+	lang_pt_btn.pressed.connect(_on_lang_pt)
+	lang_row.add_child(lang_pt_btn)
+	settings_content.add_child(lang_row)
 
-	_update_lang_toggles(en_btn, pt_btn)
+	_update_lang_toggles(lang_en_btn, lang_pt_btn)
 
 	# --- Divider -------------------------------------------------------------
-	body.add_child(_hline(CARD_DIVIDER, 1))
+	settings_content.add_child(_hline(CARD_DIVIDER, 1))
 
-	# --- Music row -----------------------------------------------------------
+	# --- Music row (icon_pass / icon_fail toggle) ----------------------------
 	var music_row := HBoxContainer.new()
-	music_row.add_theme_constant_override("separation", 10)
+	music_row.add_theme_constant_override("separation", 12)
 	var music_label := Label.new()
 	music_label.text = "Music"
 	music_label.add_theme_color_override("font_color", CARD_INK)
@@ -3011,13 +3027,31 @@ func _build_settings() -> void:
 	music_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	music_row.add_child(music_label)
 
-	var music_cb := CheckBox.new()
-	music_cb.button_pressed = settings_music
-	music_cb.add_theme_color_override("font_color", CARD_INK)
-	music_cb.add_theme_font_size_override("font_size", 16)
-	music_cb.toggled.connect(_on_music_toggled)
-	music_row.add_child(music_cb)
-	body.add_child(music_row)
+	var pass_tex := load(ICON_PASS)
+	var fail_tex := load(ICON_FAIL)
+	var music_btn := Button.new()
+	music_btn.toggle_mode = true
+	music_btn.button_pressed = settings_music
+	music_btn.custom_minimum_size = Vector2(44, 44)
+	music_btn.icon = pass_tex if settings_music else fail_tex
+	music_btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	music_btn.add_theme_icon_override("icon", pass_tex if settings_music else fail_tex)
+	var music_sb := StyleBoxFlat.new()
+	music_sb.bg_color = Color(0, 0, 0, 0)
+	music_sb.set_corner_radius_all(8)
+	music_btn.add_theme_stylebox_override("normal", music_sb)
+	var music_sb_hover := StyleBoxFlat.new()
+	music_sb_hover.bg_color = Color(0, 0, 0, 0.06)
+	music_sb_hover.set_corner_radius_all(8)
+	music_btn.add_theme_stylebox_override("hover", music_sb_hover)
+	music_btn.add_theme_stylebox_override("pressed", music_sb)
+	music_btn.add_theme_stylebox_override("focus", music_sb)
+	music_btn.toggled.connect(func(on: bool):
+		music_btn.icon = pass_tex if on else fail_tex
+		_on_music_toggled(on)
+	)
+	music_row.add_child(music_btn)
+	settings_content.add_child(music_row)
 
 	# --- Clear progress (debug) -----------------------------------------------
 	var clear_btn := Button.new()
@@ -3030,69 +3064,115 @@ func _build_settings() -> void:
 	clear_btn.add_theme_stylebox_override("normal", clr_sb)
 	clear_btn.add_theme_stylebox_override("hover", clr_sb)
 	clear_btn.pressed.connect(_on_clear_progress)
-	body.add_child(clear_btn)
+	settings_content.add_child(clear_btn)
 
 	# --- Spacer --------------------------------------------------------------
 	var spacer2 := Control.new()
 	spacer2.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(spacer2)
+	settings_content.add_child(spacer2)
 
-	# --- Bottom buttons ------------------------------------------------------
+	# --- Bottom buttons (game-style) -----------------------------------------
 	var bot_row := HBoxContainer.new()
-	bot_row.alignment = BoxContainer.ALIGNMENT_END
-	var back_btn := _make_settings_button("Back")
+	bot_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	bot_row.add_theme_constant_override("separation", 10)
+	var credits_btn := _make_game_button("Credits", Color("#8b7fc7"), Color.WHITE, bold_font)
+	credits_btn.custom_minimum_size = Vector2(110, 42)
+	credits_btn.pressed.connect(_on_credits_pressed)
+	bot_row.add_child(credits_btn)
+	var back_btn := _make_game_button("Back", CARD_BG, CARD_INK, bold_font)
+	back_btn.custom_minimum_size = Vector2(110, 42)
 	back_btn.pressed.connect(_on_settings_close)
 	bot_row.add_child(back_btn)
-	body.add_child(bot_row)
+	settings_content.add_child(bot_row)
 
-func _make_settings_toggle(text: String) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.custom_minimum_size = Vector2(68, 36)
-	b.toggle_mode = true
-	b.add_theme_font_size_override("font_size", 16)
-	b.add_theme_color_override("font_color", CARD_INK)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color("#eae4d3")
-	sb.set_corner_radius_all(10)
-	sb.set_border_width_all(2)
-	sb.border_color = CARD_DIVIDER
-	b.add_theme_stylebox_override("normal", sb)
-	var sb_pressed := StyleBoxFlat.new()
-	sb_pressed.bg_color = CARD_HEADER_TAN
-	sb_pressed.set_corner_radius_all(10)
-	sb_pressed.set_border_width_all(2)
-	sb_pressed.border_color = CARD_BAND
-	b.add_theme_stylebox_override("pressed", sb_pressed)
-	return b
+	# --- Credits page (hidden by default) ------------------------------------
+	_credits_content = VBoxContainer.new()
+	_credits_content.add_theme_constant_override("separation", 14)
+	_credits_content.visible = false
+	settings_body_margin.add_child(_credits_content)
+
+	var intro_lbl := Label.new()
+	intro_lbl.text = "A game made with love by"
+	intro_lbl.add_theme_color_override("font_color", CARD_INK)
+	intro_lbl.add_theme_font_size_override("font_size", 16)
+	intro_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if bold_font:
+		intro_lbl.add_theme_font_override("font", bold_font)
+	_credits_content.add_child(intro_lbl)
+
+	var name_lbl := Label.new()
+	name_lbl.text = "Mamoru Miyagawa"
+	name_lbl.add_theme_color_override("font_color", CARD_INK)
+	name_lbl.add_theme_font_size_override("font_size", 22)
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if bold_font:
+		name_lbl.add_theme_font_override("font", bold_font)
+	_credits_content.add_child(name_lbl)
+
+	_credits_content.add_child(_hline(CARD_DIVIDER, 1))
+
+	for role in ["Design", "Art", "Code", "Sound design"]:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var role_lbl := Label.new()
+		role_lbl.text = role + " by"
+		role_lbl.add_theme_color_override("font_color", CARD_INK_SOFT)
+		role_lbl.add_theme_font_size_override("font_size", 15)
+		role_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(role_lbl)
+		var val_lbl := Label.new()
+		val_lbl.text = "Mamoru Miyagawa" if role != "Code" and role != "Sound design" else "?"
+		val_lbl.add_theme_color_override("font_color", CARD_INK)
+		val_lbl.add_theme_font_size_override("font_size", 15)
+		if bold_font:
+			val_lbl.add_theme_font_override("font", bold_font)
+		row.add_child(val_lbl)
+		_credits_content.add_child(row)
+
+	var spacer_c := Control.new()
+	spacer_c.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_credits_content.add_child(spacer_c)
+
+	var credits_back_row := HBoxContainer.new()
+	credits_back_row.alignment = BoxContainer.ALIGNMENT_END
+	var credits_back_btn := _make_game_button("Back", CARD_BG, CARD_INK, bold_font)
+	credits_back_btn.custom_minimum_size = Vector2(110, 42)
+	credits_back_btn.pressed.connect(_on_credits_back)
+	credits_back_row.add_child(credits_back_btn)
+	_credits_content.add_child(credits_back_row)
 
 func _update_lang_toggles(en_btn: Button, pt_btn: Button) -> void:
 	en_btn.button_pressed = (settings_language == LANG_EN)
 	pt_btn.button_pressed = (settings_language == LANG_PT_BR)
+	_style_lang_toggle(en_btn, en_btn.button_pressed)
+	_style_lang_toggle(pt_btn, pt_btn.button_pressed)
 
-func _make_settings_button(text: String) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.custom_minimum_size = Vector2(110, 40)
-	b.add_theme_font_size_override("font_size", 16)
-	b.add_theme_color_override("font_color", CARD_INK)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color("#d9d3c4")
-	sb.set_corner_radius_all(12)
-	sb.set_border_width_all(2)
-	sb.border_color = CARD_INK
-	b.add_theme_stylebox_override("normal", sb)
-	var sb_hover := StyleBoxFlat.new()
-	sb_hover.bg_color = Color("#ccc6b4")
-	sb_hover.set_corner_radius_all(12)
-	sb_hover.set_border_width_all(2)
-	sb_hover.border_color = CARD_INK
-	b.add_theme_stylebox_override("hover", sb_hover)
-	return b
+func _style_lang_toggle(b: Button, active: bool) -> void:
+	var fill := CARD_BAND if active else CARD_BG
+	var fg := Color.WHITE if active else CARD_INK
+	b.add_theme_stylebox_override("normal", _btn_stylebox(fill))
+	b.add_theme_stylebox_override("hover", _btn_stylebox(fill.lightened(0.06)))
+	b.add_theme_stylebox_override("pressed", _btn_stylebox(fill.darkened(0.08)))
+	b.add_theme_stylebox_override("focus", _btn_stylebox(fill))
+	for s in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(s, fg)
 
 func _on_settings_close() -> void:
 	if settings_root:
 		settings_root.visible = false
+	# Reset to settings view on close.
+	if _credits_content:
+		_on_credits_back()
+
+func _on_credits_pressed() -> void:
+	settings_content.visible = false
+	_credits_content.visible = true
+	settings_hdr_label.text = "Credits"
+
+func _on_credits_back() -> void:
+	_credits_content.visible = false
+	settings_content.visible = true
+	settings_hdr_label.text = "Settings"
 
 func _on_settings_dim_click(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
@@ -3101,10 +3181,12 @@ func _on_settings_dim_click(event: InputEvent) -> void:
 func _on_lang_en() -> void:
 	settings_language = LANG_EN
 	_save_settings_only()
+	_update_lang_toggles(lang_en_btn, lang_pt_btn)
 
 func _on_lang_pt() -> void:
 	settings_language = LANG_PT_BR
 	_save_settings_only()
+	_update_lang_toggles(lang_en_btn, lang_pt_btn)
 
 func _on_music_toggled(on: bool) -> void:
 	settings_music = on
