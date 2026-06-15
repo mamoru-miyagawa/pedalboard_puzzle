@@ -8,6 +8,8 @@ var index: int = -1
 var is_seat: bool = false
 var anchor: Vector2 = Vector2.ZERO   # screen position where a piece's centre rests
 var occupant = null                  # Piece2D currently here, or null
+var col: int = 0                     # grid column (0 = rightmost / first in chain)
+var row: int = 0                     # grid row (0 = bottom row A)
 
 # Visual marker + its two looks, so we can tint it when it's the snap target.
 var marker: Panel = null

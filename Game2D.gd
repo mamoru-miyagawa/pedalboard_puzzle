@@ -19,15 +19,27 @@ const PEDAL_PATHS := {
 	"DD8": "res://assets/pedals/dd_8.png",
 	"CE2": "res://assets/pedals/ce_2.png",
 	"TR2": "res://assets/pedals/tr_2.png",
+	"KLONCENTAUR": "res://assets/pedals/klon.png",
+	"MORNINGGLORY": "res://assets/pedals/morning_glory.png",
+	"EMPEROR": "res://assets/pedals/penguin.png",
+	"UNICORN": "res://assets/pedals/unicorn.png",
+	"PHASE90": "res://assets/pedals/phase90.png",
+	"DYNACOMP": "res://assets/pedals/dyna_comp.png",
+	"DISTORTIONPLUS": "res://assets/pedals/dist_plus.png",
+	"TS808": "res://assets/pedals/ts808.png",
+	"TS9": "res://assets/pedals/ts9.png",
+	"TS10": "res://assets/pedals/ts10.png",
+	"WAHWAH": "res://assets/pedals/wahwah.png",
 }
-# Board art per slot count. All boards render at the same scale, derived from
-# the 3-slot reference board so they stay sized consistently across stages.
+# Board art per board type ("COLSxROWS"). All boards render at the same scale,
+# derived from the 3-slot reference board so they stay sized consistently.
 const BOARD_PATHS := {
-	3: "res://assets/pedalboard.png",
-	4: "res://assets/pedalboard_4.png",
-	5: "res://assets/pedalboard_5.png",
+	"3x1": "res://assets/boards/pedalboard.png",
+	"3x2": "res://assets/boards/pedalboard_3x2.png",
+	"4x1": "res://assets/boards/pedalboard_4.png",
+	"5x1": "res://assets/boards/pedalboard_5.png",
 }
-const BOARD_REF_PATH := "res://assets/pedalboard.png"
+const BOARD_REF_PATH := "res://assets/boards/pedalboard.png"
 const BOARD_REF_SLOTS := 3
 const BG_PNG := "res://assets/background/bg.png"
 
@@ -100,13 +112,18 @@ const WARNING_TEXT := "WARNING: This product contains chemicals known to the Sta
 
 # --- Board layout (design-space pixels; canvas_items stretch scales to window) -
 const DESIGN := Vector2(1280, 720)
-const SEAT_Y := 222.0          # y of the row of seats on the board
+const SEAT_Y := 172.0          # y of the row of seats on the board
 const TRAY_Y := 478.0          # y of the spare-pedal tray
-const SEAT_SPACING := 132.0    # horizontal gap between slot centres
+const SEAT_SPACING := 100.0    # horizontal gap between slot centres
 const PEDAL_W := 104.0         # on-screen width of a pedal (height follows aspect)
 const FALLBACK_ASPECT := 1.32  # h/w used before the pedal art is imported
 const SNAP_DIST := 92.0        # how close to a slot a drop must land to snap
 const BOARD_PAD := 70.0        # board sprite extends this far past the end seats
+const SEAT_ROW_SPACING := 140.0  # vertical gap between row centres on multi-row boards
+const SEAT_BOTTOM_ROW_Y := 240.0  # fixed Y of the bottom row on multi-row boards
+const UI_SCALE := 0.85          # global scale reduction for pedals, boards, and slot markers
+const REF_PEDAL_W := 306.0     # DD-8 source texture width (the 1x1 reference pedal)
+const REF_PEDAL_H := 400.0     # DD-8 source texture height
 
 # Wobble — a damped pendulum sway, driven by horizontal drag velocity.
 const WOBBLE_GAIN := 0.0009
@@ -146,6 +163,8 @@ var stage_rules: Array = []
 
 var seats: Array = []
 var tray_slots: Array = []
+var board_cols: int = 3          # grid columns for the current stage
+var board_rows: int = 1          # grid rows for the current stage
 var pieces := {}                # Name -> Piece2D
 var display_groups: Array = []  # [{rules:[...], desc:String}] — AND-bundled for display
 var rule_rows: Array = []       # [{icon, label, pill}] per display group
@@ -165,6 +184,7 @@ var world_root: Node2D          # holds background, board, slots, pieces
 var board_sprite: Sprite2D
 var board_shadow: Sprite2D      # silhouette shadow beneath the board
 var board_ref_scale := 1.0      # display scale shared by all boards (from the 3-slot ref)
+var ref_scale := 1.0             # universal pedal scale (pixels per source texel, from DD-8)
 var piece_label_root: Control   # crisp pedal labels, on their own layer
 var title_label: Label
 var win_label: Label
@@ -384,7 +404,10 @@ func _build_world() -> void:
 	var ref_tex = load(BOARD_REF_PATH)
 	if ref_tex:
 		var ref_span: float = max(1, BOARD_REF_SLOTS - 1) * SEAT_SPACING + PEDAL_W + BOARD_PAD * 2.0
-		board_ref_scale = ref_span / float(ref_tex.get_width())
+		board_ref_scale = (ref_span / float(ref_tex.get_width())) * UI_SCALE
+		# Universal pedal scale — all pedals render at this ratio so they stay in
+		# proportion with each other (DD-8 is the 1x1 reference).
+		ref_scale = (PEDAL_W / REF_PEDAL_W) * UI_SCALE
 
 	# Crisp labels live on a layer above the pedals so the wobble never tilts them.
 	var label_layer := CanvasLayer.new()
@@ -412,16 +435,34 @@ func show_stage(idx: int) -> void:
 	var n_items := item_names.size()
 	var n_slots := int(stage.get("slots", n_items))
 
+	# Board layout: cols x rows grid. Defaults to single-row if not specified.
+	board_cols = int(stage.get("cols", n_slots))
+	board_rows = int(stage.get("rows", 1))
+	# If board was specified but slots wasn't, derive slots from the grid.
+	if stage.has("cols"):
+		n_slots = board_cols * board_rows
+
 	# Game rule: slot 0 (the "first" in the signal chain) is the RIGHTMOST seat,
-	# and the last slot is the leftmost — so mirror the row when placing seats.
-	var seat_xs := _row_xs(n_slots)
-	for i in range(n_slots):
-		seats.append(_make_slot(true, i, Vector2(seat_xs[n_slots - 1 - i], SEAT_Y)))
+	# and the last slot is the leftmost — so mirror the columns when placing seats.
+	# Rows: row 0 = bottom (A), row 1 = top (B), etc.
+	# Bottom row is fixed at SEAT_BOTTOM_ROW_Y; rows above stack upward.
+	var col_xs := _row_xs(board_cols)
+	var seat_idx := 0
+	for r in range(board_rows):
+		var sy: float = SEAT_Y if board_rows <= 1 else (SEAT_BOTTOM_ROW_Y - r * SEAT_ROW_SPACING)
+		for c in range(board_cols):
+			var sx: float = col_xs[board_cols - 1 - c]  # mirror: col 0 = rightmost
+			var slot := _make_slot(true, seat_idx, Vector2(sx, sy))
+			slot.col = c
+			slot.row = r
+			seats.append(slot)
+			seat_idx += 1
 	var tray_xs := _row_xs(n_items)
 	for i in range(n_items):
 		tray_slots.append(_make_slot(false, i, Vector2(tray_xs[i], TRAY_Y)))
 
-	_set_board(n_slots)
+	var board_type := "%dx%d" % [board_cols, board_rows]
+	_set_board(board_type)
 
 	for nm in item_names:
 		var item = item_db.get_item(nm)
@@ -506,20 +547,22 @@ func _row_xs(n: int) -> Array:
 		xs.append(DESIGN.x * 0.5 + (i - (n - 1) * 0.5) * SEAT_SPACING)
 	return xs
 
-# Pick the board art for this slot count and place it at the shared scale.
-func _set_board(n_slots: int) -> void:
+# Pick the board art for this board type and place it at the shared scale.
+func _set_board(board_type: String) -> void:
 	if board_sprite == null:
 		return
-	var path: String = BOARD_PATHS.get(n_slots, BOARD_REF_PATH)
+	var path: String = BOARD_PATHS.get(board_type, BOARD_REF_PATH)
 	var tex = load(path)
 	board_sprite.texture = tex
 	board_shadow.texture = tex
 	if tex == null:
 		return
 	var s := board_ref_scale
-	if not BOARD_PATHS.has(n_slots):
-		# No dedicated board for this count — stretch the reference to the row.
-		var span: float = max(1, n_slots - 1) * SEAT_SPACING + PEDAL_W + BOARD_PAD * 2.0
+	if not BOARD_PATHS.has(board_type):
+		# No dedicated board for this type — stretch the reference to fit.
+		var parts := board_type.split("x")
+		var cols: int = int(parts[0]) if parts.size() >= 1 else board_cols
+		var span: float = max(1, cols - 1) * SEAT_SPACING + PEDAL_W + BOARD_PAD * 2.0
 		s = span / float(tex.get_width())
 	board_sprite.scale = Vector2(s, s)
 	board_sprite.position = Vector2(DESIGN.x * 0.5, SEAT_Y)
@@ -537,8 +580,8 @@ func _make_slot(is_seat: bool, idx: int, anchor: Vector2) -> Slot2D:
 
 	# A subtle rounded pad marking the drop target.
 	var marker := Panel.new()
-	var w := PEDAL_W + 14.0
-	var h := PEDAL_W * FALLBACK_ASPECT + 14.0
+	var w := (PEDAL_W + 14.0) * UI_SCALE
+	var h := (PEDAL_W * FALLBACK_ASPECT + 14.0) * UI_SCALE
 	marker.size = Vector2(w, h)
 	marker.position = Vector2(-w * 0.5, -h * 0.5)
 	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -574,21 +617,31 @@ func _make_piece(item: Dictionary) -> Piece2D:
 	piece.char_id = item.get("Name", "")
 	world_root.add_child(piece)
 
+	# Parse size from CSV (e.g. "1x1", "2x1", "1x2")
+	var size_str := String(item.get("Size", "1x1")).strip_edges().to_lower()
+	var parts := size_str.split("x")
+	if parts.size() == 2:
+		piece.size_w = int(parts[0]) if parts[0].is_valid_int() else 1
+		piece.size_h = int(parts[1]) if parts[1].is_valid_int() else 1
+
 	var pivot := Node2D.new()
 	piece.add_child(pivot)
 	piece.body = pivot
 
 	var tex_path := String(item.get("Model", ""))   # optional CSV override
 	if tex_path == "":
-		tex_path = _resolve_pedal(piece.char_id)
+		var asset := String(item.get("Asset", ""))   # CSV asset column (filename stem)
+		if asset != "":
+			tex_path = "res://assets/pedals/%s.png" % asset
+	if tex_path == "":
+		tex_path = _resolve_pedal(piece.char_id)     # hardcoded fallback
 	var tex: Texture2D = null
 	if tex_path != "":
 		tex = load(tex_path) as Texture2D
 
 	if tex:
-		var s := PEDAL_W / float(tex.get_width())
-		var scl := Vector2(s, s)
-		piece.display_size = Vector2(tex.get_width(), tex.get_height()) * s
+		var scl := Vector2(ref_scale, ref_scale)
+		piece.display_size = Vector2(tex.get_width(), tex.get_height()) * ref_scale
 
 		# Shadow: a dark silhouette of the pedal. Parented to the piece (not the
 		# body) so it can separate from the pedal on lift while still tracking it.
@@ -670,6 +723,19 @@ func _update_piece_labels() -> void:
 		return
 	for nm in pieces:
 		var p: Piece2D = pieces[nm]
+		var on_board := false
+		if p.slot and p.slot.is_seat:
+			on_board = true
+		for s in p.occupied_seats:
+			if s.is_seat:
+				on_board = true
+				break
+		if p.name_label:
+			p.name_label.visible = not on_board
+		if p.cat_label:
+			p.cat_label.visible = not on_board
+		if on_board:
+			continue
 		var sp := p.global_position
 		var below := p.display_size.y * 0.5
 		if p.name_label:
@@ -709,8 +775,7 @@ func _try_start_drag(screen_pos: Vector2) -> void:
 	_show_pedal_info(item_db.get_item(piece.char_id))
 	if piece.move_tween and piece.move_tween.is_valid():
 		piece.move_tween.kill()   # cancel any in-flight glide so the drag wins
-	if piece.slot:
-		piece.slot.occupant = null
+	_clear_occupied_seats(piece)
 	piece.slot = null
 	piece.z_index = 10                       # lift above the others while dragged
 	_set_lifted(piece, true)
@@ -741,14 +806,74 @@ func _end_drag() -> void:
 	var target := _nearest_slot(piece.position)
 	if target == null:
 		_place(piece, drag_from)
-	else:
-		var existing: Piece2D = target.occupant
-		if existing:
-			_place(existing, drag_from, true)   # glide to the vacated slot
+		validate()
+		return
+
+	# Multi-slot pieces on the board need to check all occupied seats.
+	if target.is_seat and (piece.size_w > 1 or piece.size_h > 1):
+		var needed := _occupied_seats_for(piece, target)
+		# If we can't fit (some seats are outside the grid), send back.
+		var expected_count: int = piece.size_w * piece.size_h
+		if needed.size() < expected_count:
+			_place(piece, drag_from)
+			validate()
+			return
+		# Collect conflicting pieces (other pieces occupying any needed seat).
+		var conflicts := {}
+		for s in needed:
+			if s.occupant != null and s.occupant != piece:
+				conflicts[s.occupant] = true
+		# Displace each conflicting piece to the tray.
+		for other in conflicts.keys():
+			var tray_slot := _find_empty_tray_slot()
+			if tray_slot:
+				_place(other, tray_slot, true)
+			else:
+				# No tray space — can't place here, send dragged piece back instead.
+				_place(piece, drag_from)
+				validate()
+				return
 		_place(piece, target)
-		if target.is_seat:
-			_spawn_burst(target.anchor)   # cute "landed on the board" pop
+		_spawn_burst(_burst_center(piece))
+		validate()
+		return
+
+	# Single-slot path.
+	var existing: Piece2D = target.occupant
+	if existing:
+		if existing.size_w > 1 or existing.size_h > 1:
+			# Multi-slot piece — send to tray, can't swap into a single slot.
+			var tray_slot := _find_empty_tray_slot()
+			if tray_slot:
+				_place(existing, tray_slot, true)
+			else:
+				# No tray space — reject the placement.
+				_place(piece, drag_from)
+				validate()
+				return
+		else:
+			_place(existing, drag_from, true)
+	_place(piece, target)
+	if target.is_seat:
+		_spawn_burst(_burst_center(piece))
 	validate()
+
+# Compute the visual centre of a piece's occupied seats (for burst effects).
+func _burst_center(piece: Piece2D) -> Vector2:
+	var occs := piece.occupied_seats
+	if occs.size() <= 1:
+		return occs[0].anchor if occs.size() == 1 else piece.position
+	var avg := Vector2.ZERO
+	for s in occs:
+		avg += s.anchor
+	return avg / occs.size()
+
+# Find an empty tray slot, or null if the tray is full.
+func _find_empty_tray_slot() -> Slot2D:
+	for s in tray_slots:
+		if s.occupant == null:
+			return s
+	return null
 
 func _spawn_burst(pos: Vector2) -> void:
 	var fx := BurstEffect.new()
@@ -787,20 +912,73 @@ func _set_lifted(piece: Piece2D, on: bool) -> void:
 			piece.shadow.position = piece.shadow_base_pos
 			piece.shadow.scale = piece.shadow_base_scale
 
+# Look up a seat by its grid (col, row) position.
+func _get_seat_at(col: int, row: int) -> Slot2D:
+	for s in seats:
+		if s.col == col and s.row == row:
+			return s
+	return null
+
+# Compute which seats a piece would occupy if anchored at the given slot.
+# For a multi-slot piece on a board seat, it extends leftward (col+1) and/or
+# upward (row+1). Tray slots are always single-slot.
+func _occupied_seats_for(piece: Piece2D, anchor: Slot2D) -> Array:
+	if not anchor.is_seat or (piece.size_w == 1 and piece.size_h == 1):
+		return [anchor]
+	var out: Array = [anchor]
+	for dc in range(1, piece.size_w):
+		var s := _get_seat_at(anchor.col + dc, anchor.row)
+		if s:
+			out.append(s)
+	for dr in range(1, piece.size_h):
+		var s := _get_seat_at(anchor.col, anchor.row + dr)
+		if s:
+			out.append(s)
+	# For 2x2 pieces, fill the remaining corner.
+	for dc in range(1, piece.size_w):
+		for dr in range(1, piece.size_h):
+			var s := _get_seat_at(anchor.col + dc, anchor.row + dr)
+			if s:
+				out.append(s)
+	return out
+
+# Clear all seats a piece is currently occupying.
+func _clear_occupied_seats(piece: Piece2D) -> void:
+	for s in piece.occupied_seats:
+		if s.occupant == piece:
+			s.occupant = null
+	piece.occupied_seats.clear()
+
+# Place a piece on a slot. Multi-slot pieces on board seats occupy adjacent seats
+# and are positioned at the centre of their occupied area.
 func _place(piece: Piece2D, slot: Slot2D, animate := false) -> void:
+	# Clear any existing occupation.
+	_clear_occupied_seats(piece)
 	piece.slot = slot
-	slot.occupant = piece
+
+	var occs: Array = _occupied_seats_for(piece, slot)
+	for s in occs:
+		s.occupant = piece
+	piece.occupied_seats = occs
+
+	var target_pos: Vector2 = slot.anchor
+	if slot.is_seat and occs.size() > 1:
+		# Centre the piece over all its occupied seats.
+		var avg := Vector2.ZERO
+		for s in occs:
+			avg += s.anchor
+		avg /= occs.size()
+		target_pos = avg
+
 	if piece.move_tween and piece.move_tween.is_valid():
 		piece.move_tween.kill()
 	if animate:
-		# Glide to the slot; the wobble naturally reacts to the slide and settles.
 		piece.prev_pos = piece.position
 		piece.move_tween = piece.create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		piece.move_tween.tween_property(piece, "position", slot.anchor, 0.22)
+		piece.move_tween.tween_property(piece, "position", target_pos, 0.22)
 	else:
-		piece.position = slot.anchor
-		# Set it down firmly — no wobble on placement.
-		piece.prev_pos = slot.anchor
+		piece.position = target_pos
+		piece.prev_pos = target_pos
 		piece.wobble = 0.0
 		piece.wobble_vel = 0.0
 		if piece.body:
@@ -860,7 +1038,7 @@ func validate() -> void:
 		else:
 			order.append("")
 
-	var ctx := {"order": order, "num": seats.size(), "db": item_db, "items": pieces.keys()}
+	var ctx := {"order": order, "num": seats.size(), "db": item_db, "items": pieces.keys(), "cols": board_cols, "rows": board_rows}
 	var board_full := seated == seats.size() and seated > 0
 	var all_pass := true
 	var passed := 0

@@ -1,6 +1,17 @@
-Pedal Name,Brand,Color,Category 1,Category 2,Size,Bypass,Era,Power,Extra
-DD-8,Boss,White,Digital,Delay,M,buffered,modern,mid,
-SD-1,Boss,Yellow,Overdrive,Gain,M,buffered,modern,low,
-BD-2,Boss,Blue,Overdrive,Gain,M,buffered,modern,low,
-CE-2,Boss,Blue,Chorus,Modulation,M,true bypass,vintage,mid,modded
-TR-2,Boss,Green,Tremolo,Modulation,M,buffered,vintage,mid,
+Pedal Name,Asset,Brand,Color,Category 1,Category 2,Size,Bypass,Era,Power,Extra,budget
+DD-8,dd_8,Boss,White,Digital Delay,Delay,1x1,buffered,modern,mid,,2
+SD-1,sd_1,Boss,Yellow,Overdrive,Gain,1x1,buffered,modern,low,,1
+BD-2,bd_2,Boss,Blue,Overdrive,Gain,1x1,buffered,modern,low,,1
+CE-2,ce_2,Boss,Blue,Chorus,Modulation,1x1,true bypass,vintage,mid,modded,3
+TR-2,tr_2,Boss,Green,Tremolo,Modulation,1x1,buffered,vintage,mid,,2
+Klon Centaur,klon,Klon,Golden,Overdrive,Gain,2x1,buffered,vintage,low,,10
+Morning Glory,morning_glory,JHS,Golden,Overdrive,Gain,1x1,true bypass,modern,low,,3
+Emperor,penguin,JHS,Purple,"Chorus, Vibrato",Modulation,1x1,true bypass,modern,mid,,3
+Unicorn,unicorn,JHS,Blue,"Univibe, Vibrato",Modulation,1x1,true bypass,modern,mid,,3
+Phase 90,phase90,MXR,Orange,Phaser,Modulation,1x1,True bypass,modern,low,,2
+Dyna Comp,dyna_comp,MXR,Red,Compressor,Gain,1x1,True bypass,modern,low,,2
+Distortion Plus,dist_plus,MXR,Orange,Distortion,Gain,1x1,True bypass,modern,low,,2
+TS808,ts808,Ibanez,Green,Overdrive,Gain,1x1,buffered,modern,low,,3
+TS9,ts9,Ibanez,Green,Overdrive,Gain,1x1,buffered,modern,low,,3
+TS10,ts10,Ibanez,Green,Overdrive,Gain,1x1,buffered,vintage,low,,5
+Wahwah,wahwah,Jim Dunlop,Black,Wah wah,Dynamic,1x2,buffered,modern,mid,,3

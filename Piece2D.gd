@@ -5,6 +5,9 @@ class_name Piece2D
 
 var char_id: String = ""
 var slot = null              # Slot2D it currently rests in (null while being dragged)
+var size_w: int = 1          # grid width in slots (from CSV Size column)
+var size_h: int = 1          # grid height in slots
+var occupied_seats: Array = []  # all Slot2D seats this piece currently occupies
 
 var body: Node2D = null      # pivot node that gets rotated for the wobble
 var display_size := Vector2(104, 137)   # on-screen size of the sprite (for hit-testing)

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bjt2ygy1wl00w"
-path="res://.godot/imported/pedalboard_5.png-bb43197a49c5e1ad15f15f13a7f2585f.ctex"
+uid="uid://dgvbaw347icah"
+path="res://.godot/imported/unicorn.png-48663681841014215956b36b71fe9866.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/pedalboard_5.png"
-dest_files=["res://.godot/imported/pedalboard_5.png-bb43197a49c5e1ad15f15f13a7f2585f.ctex"]
+source_file="res://assets/pedals/unicorn.png"
+dest_files=["res://.godot/imported/unicorn.png-48663681841014215956b36b71fe9866.ctex"]
 
 [params]
 

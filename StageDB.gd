@@ -11,6 +11,8 @@ class_name StageDB
 ##   Stage Name  title shown in game
 ##   Slots       number of board slots (optional; defaults to the item count).
 ##               Set fewer than the items to give the player spare pedals.
+##   Board       board layout as COLUMNSxROWS (e.g. "3x2", "5x1"). Optional;
+##               defaults to "{Slots}x1". The total slot count is cols * rows.
 ##   Items       pedal names for the stage, separated by ; (e.g. "BD-2; SD-1; DD-8")
 ##   Group       optional id; rules sharing a (Stage, Group) are AND-bundled into one
 ##               requirement that only goes green when ALL its rules pass.
@@ -159,7 +161,29 @@ static func _parse_csv(path: String) -> Array:
 			stage["items"] = _split(items)
 		var slots := _cell(row, idx, "slots")
 		if slots != "" and not stage.has("slots"):
-			stage["slots"] = int(slots)
+			# Extract the numeric part (e.g. "6 (3x2)" → 6)
+			var num_str := slots.strip_edges()
+			for i in range(num_str.length()):
+				if not num_str[i].is_valid_int():
+					num_str = num_str.substr(0, i)
+					break
+			if num_str != "":
+				stage["slots"] = int(num_str)
+			# Also try to extract board layout from the Slots value itself
+			# e.g. "6 (3x2)" or "3x2" — look for NxM pattern.
+			if not stage.has("cols"):
+				var rx := RegEx.new()
+				rx.compile("(\\d+)x(\\d+)")
+				var m := rx.search(slots.to_lower())
+				if m:
+					stage["cols"] = int(m.get_string(1))
+					stage["rows"] = int(m.get_string(2))
+		var board := _cell(row, idx, "board")
+		if board != "" and not stage.has("cols"):
+			var parts := board.to_lower().split("x")
+			if parts.size() == 2:
+				stage["cols"] = int(parts[0])
+				stage["rows"] = int(parts[1])
 
 		if rtype != "":
 			stage["rules"].append(_build_rule(row, idx, rtype))
