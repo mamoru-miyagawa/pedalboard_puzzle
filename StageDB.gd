@@ -29,6 +29,8 @@ class_name StageDB
 ##   Op          <= | < | >= | > | == | !=       (count)
 ##   Value       a number                        (count)
 ##   Region      all | edges | middle | left | right  (count)
+##   Secret      TRUE/FALSE (any rule or group) — hidden as "??????" until completed
+##                 once per stage. Contributes a bonus star.
 ##
 ## A SELECTOR is one cell, written as:
 ##   all                     every pedal
@@ -225,6 +227,9 @@ static func _build_rule(row: Array, idx: Dictionary, rtype: String) -> Dictionar
 	var desc := _cell(row, idx, "description")
 	if desc != "":
 		rule["desc"] = desc
+	var secret := _cell(row, idx, "secret")
+	if secret != "" and _truthy(secret):
+		rule["secret"] = true
 	return rule
 
 # --- cell / parsing helpers -------------------------------------------------

@@ -73,6 +73,8 @@ const AVATAR := "res://assets/ui/avatar.png"
 # Per-stage email content for the inbox card.
 const MAIL_CSV := "res://config/stage_mail.csv"
 
+const SECRET_HIDDEN_TEXT := "??????"
+
 # Card palette.
 const CARD_BG := Color("#f6efdd")
 const CARD_HEADER := Color("#c9b9f2")
@@ -166,6 +168,10 @@ var tray_slots: Array = []
 var board_cols: int = 3          # grid columns for the current stage
 var board_rows: int = 1          # grid rows for the current stage
 var pieces := {}                # Name -> Piece2D
+var secret_group_idx: int = -1    # index in display_groups of the secret rule (-1 = none)
+var secret_ever_completed := {}   # stage id (string) -> bool, from save
+var secret_just_completed := false# true if secret task passed this validation
+var max_stars := 1                # 1 = normal only, 2 = includes secret
 var display_groups: Array = []  # [{rules:[...], desc:String}] — AND-bundled for display
 var rule_rows: Array = []       # [{icon, label, pill}] per display group
 var progress_bar: ProgressBar
@@ -210,6 +216,7 @@ var dragging: Piece2D = null
 var drag_from: Slot2D = null
 var drag_offset := Vector2.ZERO
 var hover_slot: Slot2D = null     # slot currently highlighted as the snap target
+var hovered_seats: Array = []     # all seats highlighted (anchor + extensions for multi-slot)
 
 # Pedal-info card (spec sheet).
 var info_panel: Panel
@@ -253,6 +260,7 @@ var results_stars: Array = []   # the three rating-star Labels
 var results_star_tween: Tween
 var results_seq_tween: Tween      # entrance/exit sequence tween
 var results_card_content: VBoxContainer
+var results_preview_container: Node2D  # polaroid board preview (Node2D wrapper)
 var results_dim: ColorRect       # dim backdrop for smooth fade-in
 
 # Stage intro choreography (dim → ringing mail → email + objective → game).
@@ -316,10 +324,17 @@ func _save_progress() -> void:
 	var prev: int = _get_saved_stage()
 	var hi: int = max(current_stage, prev)
 	cfg.set_value("progress", "highest_stage", hi)
-	# Record 3 stars for the just-completed stage.
+	# Calculate stars: 1 for completing all normal tasks, +1 for secret task.
+	var earned := 1
+	if secret_just_completed:
+		var st_id := String(stages[current_stage].get("id", str(current_stage + 1)))
+		secret_ever_completed[st_id] = true
+		cfg.set_value("progress", "stage_%s_secret" % st_id, true)
+		if max_stars >= 2:
+			earned = 2
 	if stage_stars.size() <= current_stage:
 		stage_stars.resize(current_stage + 1)
-	stage_stars[current_stage] = 3
+	stage_stars[current_stage] = max(stage_stars[current_stage] if current_stage < stage_stars.size() else 0, earned)
 	for i in range(hi + 1):
 		cfg.set_value("progress", "stage_%d_stars" % i, stage_stars[i] if i < stage_stars.size() else 0)
 	cfg.set_value("settings", "language", settings_language)
@@ -343,6 +358,11 @@ func _load_progress() -> void:
 	stage_stars.resize(hi + 1)
 	for i in range(hi + 1):
 		stage_stars[i] = cfg.get_value("progress", "stage_%d_stars" % i, 0) as int
+	# Load per-stage secret reveal state.
+	for i in range(hi + 1):
+		var sid := str(i + 1)
+		if cfg.get_value("progress", "stage_%s_secret" % sid, false) as bool:
+			secret_ever_completed[sid] = true
 
 func _save_settings_only() -> void:
 	var cfg := ConfigFile.new()
@@ -472,8 +492,13 @@ func show_stage(idx: int) -> void:
 		pieces[nm] = _make_piece(item)
 
 	_build_display_groups()
+	max_stars = 2 if secret_group_idx >= 0 else 1
+	secret_just_completed = false
 	for i in range(display_groups.size()):
-		_add_rule_row(String(display_groups[i]["desc"]), i == 0)
+		var desc := String(display_groups[i]["desc"])
+		if display_groups[i].get("secret", false) and not secret_ever_completed.get(String(stages[current_stage].get("id", str(current_stage + 1))), false):
+			desc = SECRET_HIDDEN_TEXT
+		_add_rule_row(desc, i == 0)
 	_reset_tracker()
 	stage_complete = false
 	# Ensure mail icon and tracker are in their normal positions.
@@ -497,19 +522,35 @@ func show_stage(idx: int) -> void:
 # Bundle rules that share a Group id into a single AND requirement for display.
 func _build_display_groups() -> void:
 	display_groups.clear()
+	secret_group_idx = -1
 	var group_index := {}
+	# Track which groups contain a secret rule.
+	var is_secret_group := {}
 	for rule in stage_rules:
 		var g := String(rule.get("group", ""))
 		if g == "":
 			display_groups.append({"rules": [rule], "desc": String(rule.get("desc", ""))})
+			if rule.get("secret", false):
+				secret_group_idx = display_groups.size() - 1
+				display_groups[secret_group_idx]["secret"] = true
 		elif group_index.has(g):
 			var e = display_groups[group_index[g]]
 			e["rules"].append(rule)
 			if e["desc"] == "" and String(rule.get("desc", "")) != "":
 				e["desc"] = String(rule.get("desc", ""))
+			if rule.get("secret", false):
+				is_secret_group[g] = true
 		else:
 			group_index[g] = display_groups.size()
 			display_groups.append({"rules": [rule], "desc": String(rule.get("desc", ""))})
+			if rule.get("secret", false):
+				is_secret_group[g] = true
+	# Mark group entries that had any secret rule.
+	for g in is_secret_group.keys():
+		var idx: int = group_index.get(g, -1)
+		if idx >= 0:
+			display_groups[idx]["secret"] = true
+			secret_group_idx = idx
 	# Auto-describe any entry that has no custom text.
 	for e in display_groups:
 		if e["desc"] == "":
@@ -800,9 +841,12 @@ func _end_drag() -> void:
 	_set_slot_markers(false)     # hide the drop targets again once placed
 	piece.z_index = 0
 	_set_lifted(piece, false)
-	if hover_slot:
-		hover_slot.set_highlight(false)
-		hover_slot = null
+	if hovered_seats.size() > 0:
+		for s in hovered_seats:
+			if s:
+				s.set_highlight(false)
+		hovered_seats.clear()
+	hover_slot = null
 	var target := _nearest_slot(piece.position)
 	if target == null:
 		_place(piece, drag_from)
@@ -1005,16 +1049,30 @@ func _process(delta: float) -> void:
 			if stage_snap_timer <= 0.0:
 				_snap_nearest()
 
-# Highlight the slot the dragged pedal would snap into, clearing the previous one.
+# Highlight the slot(s) the dragged pedal would snap into, clearing the previous ones.
+# For multi-slot pieces, all occupied seats are highlighted.
 func _update_snap_highlight() -> void:
 	var target := _nearest_slot(dragging.position)
 	if target == hover_slot:
 		return
-	if hover_slot:
-		hover_slot.set_highlight(false)
+	# Clear previous highlights.
+	for s in hovered_seats:
+		if s:
+			s.set_highlight(false)
+	hovered_seats.clear()
 	hover_slot = target
-	if hover_slot:
-		hover_slot.set_highlight(true)
+	if not hover_slot:
+		return
+	# Highlight the anchor seat.
+	hover_slot.set_highlight(true)
+	hovered_seats.append(hover_slot)
+	# For multi-slot pieces, also highlight the other occupied seats.
+	if dragging and (dragging.size_w > 1 or dragging.size_h > 1):
+		var extra := _occupied_seats_for(dragging, hover_slot)
+		for s in extra:
+			if s != hover_slot:
+				s.set_highlight(true)
+				hovered_seats.append(s)
 
 func _update_wobble(piece: Piece2D, delta: float) -> void:
 	var vel := (piece.position - piece.prev_pos) / delta
@@ -1042,8 +1100,10 @@ func validate() -> void:
 	var board_full := seated == seats.size() and seated > 0
 	var all_pass := true
 	var passed := 0
+	var secret_pass := false
 	var states: Array = []
 	for i in range(display_groups.size()):
+		var is_secret := (display_groups[i].get("secret", false) as bool) and i == secret_group_idx
 		var st := _group_state(ctx, display_groups[i]["rules"], board_full)
 		states.append(st)
 		if i < rule_rows.size():
@@ -1053,8 +1113,21 @@ func validate() -> void:
 			row["pill"].visible = st == RuleEngine.STATE_FAIL
 		if st == RuleEngine.STATE_PASS:
 			passed += 1
-		else:
+			if is_secret:
+				secret_pass = true
+		elif not is_secret:
 			all_pass = false
+
+	# Reveal secret description once completed.
+	if secret_pass:
+		var st_id := String(stages[current_stage].get("id", str(current_stage + 1)))
+		secret_ever_completed[st_id] = true
+		secret_just_completed = true
+		# If the description was hidden, reveal it now.
+		if secret_group_idx >= 0 and secret_group_idx < rule_rows.size():
+			var row: Dictionary = rule_rows[secret_group_idx]
+			row["label"].text = String(display_groups[secret_group_idx].get("desc", ""))
+			row["label"].visible = true
 
 	_update_progress(passed, display_groups.size())
 	_sync_tracker(states)
@@ -1394,7 +1467,7 @@ func _build_ui() -> void:
 	_build_results(bold_font)
 
 # Stage-complete email: cute stars, the order's result text, and the three
-# scored rules (Commission / Extras / Budget). Modal, on top of everything.
+	# scored rules (Task complete / Secret objective). Modal, on top of everything.
 func _build_results(bold_font) -> void:
 	results_layer = CanvasLayer.new()
 	results_layer.layer = 5            # in front of the world + all other UI
@@ -1550,7 +1623,7 @@ func _build_results(bold_font) -> void:
 	star_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	star_row.add_theme_constant_override("separation", 16)
 	results_stars.clear()
-	for _i in range(3):
+	for _i in range(2):
 		var s := Label.new()
 		s.text = "☆"
 		s.add_theme_font_size_override("font_size", 46)
@@ -1563,7 +1636,7 @@ func _build_results(bold_font) -> void:
 	var rules_box := HBoxContainer.new()
 	rules_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	rules_box.add_theme_constant_override("separation", 18)
-	for rname in ["Commission", "Extras", "Budget"]:
+	for rname in ["Task complete", "Secret objective"]:
 		_results_rule_row(rules_box, String(rname), bold_font)
 	bottom_col.add_child(rules_box)
 
@@ -1842,7 +1915,7 @@ func _build_tile_contents(tile: Control, stage_num: int, unlocked: bool) -> void
 		star_row.alignment = BoxContainer.ALIGNMENT_CENTER
 		star_row.add_theme_constant_override("separation", 3)
 		var stars: int = stage_stars[stage_num - 1] if stage_num - 1 < stage_stars.size() else 0
-		for _si in range(3):
+		for _si in range(2):
 			var s := Label.new()
 			s.text = "★" if _si < stars else "☆"
 			s.add_theme_font_size_override("font_size", 18)
@@ -1935,8 +2008,135 @@ func _show_results() -> void:
 		var req := String(m.get("e-mail", ""))
 		results_body.text = "Thank you so much — exactly what I wanted!\n\n\"%s\"" % req if req != "" else "Thank you so much — exactly what I wanted!"
 
+	# Populate the polaroid board preview.
+	_populate_results_preview()
+
 	# Pre-set the card size from content before animating.
 	call_deferred("_animate_results")
+
+# Render a mini snapshot of the finished board in a floating polaroid frame
+# on top of the results screen, positioned at the top-right corner.
+func _populate_results_preview() -> void:
+	# Remove previous polaroid if any.
+	if results_preview_container:
+		results_preview_container.queue_free()
+
+	var frame_size := 280.0
+	var border := 14.0
+	var inner_size := frame_size - border * 2.0
+
+	# Style for the white polaroid border.
+	var pf := StyleBoxFlat.new()
+	pf.bg_color = Color.TRANSPARENT
+	pf.set_corner_radius_all(4)
+	pf.set_border_width_all(border)
+	pf.border_color = Color.WHITE
+
+	# Wrapper Node2D — position + rotation cascade to ALL children.
+	var cx := 870.0
+	var cy := 160.0
+	var rot := randf_range(-3.0, 3.0)
+
+	var wrapper := Node2D.new()
+	wrapper.position = Vector2(cx, cy)
+	wrapper.rotation_degrees = rot
+	wrapper.z_index = 10
+	results_root.add_child(wrapper)
+	results_preview_container = wrapper
+	wrapper.visible = false
+
+	# Solid drop shadow behind everything (z_index -2).
+	var shdw := Panel.new()
+	shdw.position = Vector2(-frame_size * 0.5 + 4, -frame_size * 0.5 + 8)
+	shdw.size = Vector2(frame_size, frame_size)
+	shdw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shdw.z_index = -2
+	var ssb := StyleBoxFlat.new()
+	ssb.bg_color = CARD_SHADOW
+	ssb.set_corner_radius_all(4)
+	shdw.add_theme_stylebox_override("panel", ssb)
+	wrapper.add_child(shdw)
+
+	# Photo crop box at z_index -1 � clips pedals to the inner area.
+	var inner := Control.new()
+	inner.position = Vector2(-inner_size * 0.5, -inner_size * 0.5)
+	inner.size = Vector2(inner_size, inner_size)
+	inner.clip_contents = true
+	inner.z_index = -1
+	wrapper.add_child(inner)
+
+	# Photo content pivot at inner centre.
+	var pivot := Node2D.new()
+	pivot.position = Vector2(inner_size, inner_size) * 0.5
+	inner.add_child(pivot)
+	var world_center := Vector2(DESIGN.x * 0.5, SEAT_Y)
+
+	# Scale: zoom so the pedalboard fills most of the inner area.
+	var board_world_w := max(1, BOARD_REF_SLOTS - 1) * SEAT_SPACING + PEDAL_W + BOARD_PAD * 2.0
+	var board_world_w_scaled := board_world_w * UI_SCALE
+	var padding_px := 20.0
+	var preview_scale := (inner_size - padding_px * 2.0) / board_world_w_scaled
+
+	# Background.
+	var bg_tex = load(BG_PNG)
+	if bg_tex:
+		var bg := Sprite2D.new()
+		bg.texture = bg_tex
+		bg.centered = true
+		bg.position = (DESIGN * 0.5 - world_center) * preview_scale
+		bg.scale = Vector2(preview_scale, preview_scale)
+		bg.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		pivot.add_child(bg)
+
+	# Board shadow + sprite.
+	if board_sprite and board_sprite.texture:
+		var bs := board_sprite
+		var scl := bs.scale * preview_scale
+		var pos: Vector2 = (bs.position - world_center) * preview_scale
+		var sh := Sprite2D.new()
+		sh.texture = bs.texture
+		sh.centered = true
+		sh.scale = scl
+		sh.position = pos + Vector2(BOARD_SHADOW_OFFSET.x, BOARD_SHADOW_OFFSET.y) * preview_scale
+		sh.modulate = SHADOW_COLOR
+		sh.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		pivot.add_child(sh)
+		var brd := Sprite2D.new()
+		brd.texture = bs.texture
+		brd.centered = true
+		brd.scale = scl
+		brd.position = pos
+		brd.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		pivot.add_child(brd)
+
+	# Pedals.
+	for nm in pieces:
+		var p: Piece2D = pieces[nm]
+		var on_board := false
+		for s in p.occupied_seats:
+			if s.is_seat:
+				on_board = true
+				break
+		if not on_board:
+			continue
+		if p.body and p.body.get_child_count() > 0:
+			var src := p.body.get_child(0)
+			if src is Sprite2D and src.texture:
+				var ped := Sprite2D.new()
+				ped.texture = src.texture
+				ped.centered = true
+				ped.scale = src.scale * preview_scale
+				ped.position = (p.position - world_center) * preview_scale
+				ped.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+				pivot.add_child(ped)
+
+	# White border frame on top (z_index 0), so it covers any photo overflow.
+	var frame := Panel.new()
+	frame.position = Vector2(-frame_size * 0.5, -frame_size * 0.5)
+	frame.size = Vector2(frame_size, frame_size)
+	frame.add_theme_stylebox_override("panel", pf)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrapper.add_child(frame)
 
 func _animate_results() -> void:
 	_layout_results_card_by_content()
@@ -1991,8 +2191,20 @@ func _animate_results() -> void:
 	# Phase 4: play the star sequence after the card settles.
 	results_seq_tween.tween_callback(_play_star_sequence)
 
+	# Phase 5: polaroid appears 1s after the card is fully in.
+	results_seq_tween.tween_interval(1.0)
+	results_seq_tween.tween_callback(_reveal_polaroid)
+
+func _reveal_polaroid() -> void:
+	if results_preview_container:
+		results_preview_container.visible = true
+		results_preview_container.scale = Vector2(1.08, 1.08)
+		var t := create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		t.tween_property(results_preview_container, "scale", Vector2.ONE, 0.3)
+
 # Reset the rating stars to hollow, then fill them one at a time, popping a
 # burst of action lines as each lands.
+
 func _play_star_sequence() -> void:
 	for s in results_stars:
 		s.text = "☆"

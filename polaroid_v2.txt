@@ -1,0 +1,98 @@
+	# Wrapper Node2D — position + rotation cascade to ALL children.
+	var cx := 870.0
+	var cy := 160.0
+	var rot := randf_range(-3.0, 3.0)
+
+	var wrapper := Node2D.new()
+	wrapper.position = Vector2(cx, cy)
+	wrapper.rotation_degrees = rot
+	wrapper.z_index = 10
+	results_root.add_child(wrapper)
+	results_preview_container = wrapper
+	wrapper.visible = false
+
+	# Solid drop shadow behind everything (z_index -2).
+	var shdw := Panel.new()
+	shdw.position = Vector2(-frame_size * 0.5 + 4, -frame_size * 0.5 + 8)
+	shdw.size = Vector2(frame_size, frame_size)
+	shdw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shdw.z_index = -2
+	var ssb := StyleBoxFlat.new()
+	ssb.bg_color = CARD_SHADOW
+	ssb.set_corner_radius_all(4)
+	shdw.add_theme_stylebox_override("panel", ssb)
+	wrapper.add_child(shdw)
+
+	# Photo content at z_index -1 (behind the white frame).
+	var pivot := Node2D.new()
+	pivot.z_index = -1
+	pivot.position = Vector2.ZERO
+	wrapper.add_child(pivot)
+	var world_center := Vector2(DESIGN.x * 0.5, SEAT_Y)
+
+	# Scale: zoom so the pedalboard fills most of the inner area.
+	var board_world_w := max(1, BOARD_REF_SLOTS - 1) * SEAT_SPACING + PEDAL_W + BOARD_PAD * 2.0
+	var board_world_w_scaled := board_world_w * UI_SCALE
+	var padding_px := 20.0
+	var preview_scale := (inner_size - padding_px * 2.0) / board_world_w_scaled
+
+	# Background.
+	var bg_tex = load(BG_PNG)
+	if bg_tex:
+		var bg := Sprite2D.new()
+		bg.texture = bg_tex
+		bg.centered = true
+		bg.position = (DESIGN * 0.5 - world_center) * preview_scale
+		bg.scale = Vector2(preview_scale, preview_scale)
+		bg.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		pivot.add_child(bg)
+
+	# Board shadow + sprite.
+	if board_sprite and board_sprite.texture:
+		var bs := board_sprite
+		var scl := bs.scale * preview_scale
+		var pos: Vector2 = (bs.position - world_center) * preview_scale
+		var sh := Sprite2D.new()
+		sh.texture = bs.texture
+		sh.centered = true
+		sh.scale = scl
+		sh.position = pos + Vector2(BOARD_SHADOW_OFFSET.x, BOARD_SHADOW_OFFSET.y) * preview_scale
+		sh.modulate = SHADOW_COLOR
+		sh.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		pivot.add_child(sh)
+		var brd := Sprite2D.new()
+		brd.texture = bs.texture
+		brd.centered = true
+		brd.scale = scl
+		brd.position = pos
+		brd.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		pivot.add_child(brd)
+
+	# Pedals.
+	for nm in pieces:
+		var p: Piece2D = pieces[nm]
+		var on_board := false
+		for s in p.occupied_seats:
+			if s.is_seat:
+				on_board = true
+				break
+		if not on_board:
+			continue
+		if p.body and p.body.get_child_count() > 0:
+			var src := p.body.get_child(0)
+			if src is Sprite2D and src.texture:
+				var ped := Sprite2D.new()
+				ped.texture = src.texture
+				ped.centered = true
+				ped.scale = src.scale * preview_scale
+				ped.position = (p.position - world_center) * preview_scale
+				ped.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+				pivot.add_child(ped)
+
+	# White border frame on top (z_index 0), so it covers any photo overflow.
+	var frame := Panel.new()
+	frame.position = Vector2(-frame_size * 0.5, -frame_size * 0.5)
+	frame.size = Vector2(frame_size, frame_size)
+	frame.add_theme_stylebox_override("panel", pf)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrapper.add_child(frame)
