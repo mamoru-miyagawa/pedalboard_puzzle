@@ -41,7 +41,8 @@ const BOARD_PATHS := {
 }
 const BOARD_REF_PATH := "res://assets/boards/pedalboard.png"
 const BOARD_REF_SLOTS := 3
-const BG_PNG := "res://assets/background/bg.png"
+const BG_PNG := "res://assets/background/bg_2.png"
+const PHOTO_BG_PNG := "res://assets/background/bg_photo.png"
 
 # Starting screen assets.
 const START_BG := "res://assets/starting_screen/starting_screen.png"
@@ -115,7 +116,7 @@ const WARNING_TEXT := "WARNING: This product contains chemicals known to the Sta
 # --- Board layout (design-space pixels; canvas_items stretch scales to window) -
 const DESIGN := Vector2(1280, 720)
 const SEAT_Y := 172.0          # y of the row of seats on the board
-const TRAY_Y := 478.0          # y of the spare-pedal tray
+const TRAY_Y := 490.0          # y of the spare-pedal tray
 const SEAT_SPACING := 100.0    # horizontal gap between slot centres
 const PEDAL_W := 104.0         # on-screen width of a pedal (height follows aspect)
 const FALLBACK_ASPECT := 1.32  # h/w used before the pedal art is imported
@@ -124,6 +125,15 @@ const BOARD_PAD := 70.0        # board sprite extends this far past the end seat
 const SEAT_ROW_SPACING := 140.0  # vertical gap between row centres on multi-row boards
 const SEAT_BOTTOM_ROW_Y := 240.0  # fixed Y of the bottom row on multi-row boards
 const UI_SCALE := 0.85          # global scale reduction for pedals, boards, and slot markers
+
+# Drawer (tray) area — the drawer asset sits at 2/3 scale centred on screen.
+# At 1334×812 × ⅔ ≈ 889×541, centred at (640, 360):
+#   x: 195.5 … 1084.5,  y: 89.5 … 630.5
+# The tray slots are positioned within this area with padding.
+const DRAWER_H_PAD := 40.0      # horizontal padding from drawer edges
+const DRAWER_LEFT := 640.0 - 889.0 * 0.5 + DRAWER_H_PAD  # ≈236
+const DRAWER_RIGHT := 640.0 + 889.0 * 0.5 - DRAWER_H_PAD  # ≈1044
+const DRAWER_Y := 425.0  # vertical centre of the drawer sprite
 const REF_PEDAL_W := 306.0     # DD-8 source texture width (the 1x1 reference pedal)
 const REF_PEDAL_H := 400.0     # DD-8 source texture height
 
@@ -186,6 +196,11 @@ var mail_subject: Label
 var mail_intro: Label
 var mail_by_stage := {}
 
+# Tray filter.
+var tray_filter_groups: Array = []   # ordered category-2 group names present (e.g. ["Gain", "Modulation"])
+var tray_filter_idx: int = 0        # which filter is active (index into tray_filter_groups)
+var tray_filter_buttons: Array = []  # [{btn:Button, group:String}]
+
 var world_root: Node2D          # holds background, board, slots, pieces
 var board_sprite: Sprite2D
 var board_shadow: Sprite2D      # silhouette shadow beneath the board
@@ -204,6 +219,7 @@ var mail_dot: Panel                # red notification badge
 var mail_tex_closed: Texture2D
 var mail_tex_open: Texture2D
 var mail_scale := 1.0
+var mail_float_tween: Tween
 var rules_tween: Tween
 var mail_shake_tween: Tween
 const RULES_TOP := 90
@@ -389,19 +405,40 @@ func _build_world() -> void:
 	world_root = Node2D.new()
 	world_layer.add_child(world_root)
 
-	# Backdrop image (flat-vector desk scene), cover-fitted to the design rect.
-	var bg_tex = load(BG_PNG)
-	if bg_tex:
-		var bg := Sprite2D.new()
-		bg.texture = bg_tex
-		bg.centered = true
-		bg.position = DESIGN * 0.5
-		bg.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-		var cover: float = max(DESIGN.x / bg_tex.get_width(), DESIGN.y / bg_tex.get_height())
-		bg.scale = Vector2(cover, cover)
-		bg.z_index = -20
-		world_root.add_child(bg)
-	else:
+	# Backdrop images — layered: bg_1 (base), drawer, bg_2 (top).
+	var bg_tex_1 = load("res://assets/background/bg_1.png")
+	var bg_tex_2 = load("res://assets/background/bg_2.png")
+	var drawer_tex = load("res://assets/background/bg_drawer.png")
+
+	# Helper to add a cover-fitted background sprite.
+	var add_bg_layer := func(tex, z: int, pos: Vector2 = DESIGN * 0.5):
+		if not tex:
+			return
+		var spr := Sprite2D.new()
+		spr.texture = tex
+		spr.centered = true
+		spr.position = pos
+		spr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		spr.z_index = z
+		var cover: float = max(DESIGN.x / tex.get_width(), DESIGN.y / tex.get_height())
+		spr.scale = Vector2(cover, cover)
+		world_root.add_child(spr)
+
+	add_bg_layer.call(bg_tex_1, -22)
+	# Drawer — scaled to match the background scale.
+	if drawer_tex:
+		var dr := Sprite2D.new()
+		dr.texture = drawer_tex
+		dr.centered = true
+		dr.position = Vector2(DESIGN.x * 0.5, DRAWER_Y)
+		dr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		dr.z_index = -21
+		dr.scale = Vector2.ONE * (2.0 / 3.0)
+		world_root.add_child(dr)
+	add_bg_layer.call(bg_tex_2, -20)
+
+	# Fallback if no textures loaded.
+	if not bg_tex_1 and not bg_tex_2:
 		var bg := ColorRect.new()
 		bg.color = Color("#23232e")
 		bg.size = DESIGN
@@ -481,9 +518,13 @@ func show_stage(idx: int) -> void:
 			slot.row = r
 			seats.append(slot)
 			seat_idx += 1
-	var tray_xs := _row_xs(n_items)
-	for i in range(n_items):
-		tray_slots.append(_make_slot(false, i, Vector2(tray_xs[i], TRAY_Y)))
+	var tray_xs := _row_xs_in_drawer(20)
+	for i in range(20):
+		var slot := _make_slot(false, i, Vector2(tray_xs[i], TRAY_Y))
+		# Hide tray slot markers — no individual drop targets needed.
+		if slot.marker:
+			slot.marker.visible = false
+		tray_slots.append(slot)
 
 	var board_type := "%dx%d" % [board_cols, board_rows]
 	_set_board(board_type)
@@ -504,6 +545,8 @@ func show_stage(idx: int) -> void:
 			desc = SECRET_HIDDEN_TEXT
 		_add_rule_row(desc, i == 0)
 	_reset_tracker()
+	# Set up filter buttons (don't apply yet — pedals aren't in trays).
+	_setup_tray_filter_buttons()
 	stage_complete = false
 	# Ensure mail icon and tracker are in their normal positions.
 	if mail_root:
@@ -520,6 +563,8 @@ func show_stage(idx: int) -> void:
 		_place(pieces[order[i]], tray_slots[i])
 	for nm in pieces:
 		pieces[nm].prev_pos = pieces[nm].position
+	# Now apply the tray filter to hide non-matching pedals.
+	_apply_tray_filter()
 	validate()
 	# Presentation is driven by the stage intro (_play_stage_intro), not here.
 
@@ -584,12 +629,28 @@ func _clear_stage() -> void:
 	for c in rules_content.get_children():
 		c.queue_free()
 	rule_rows.clear()
+	# Hide filter bar.
+	var bar = bar_meta("bar")
+	if bar is HBoxContainer:
+		bar.visible = false
 
 # Evenly spaced, horizontally centred x positions for a row of n slots.
 func _row_xs(n: int) -> Array:
 	var xs: Array = []
 	for i in range(n):
 		xs.append(DESIGN.x * 0.5 + (i - (n - 1) * 0.5) * SEAT_SPACING)
+	return xs
+
+# Tray slot positions: fixed SEAT_SPACING between each, centred within the drawer.
+func _row_xs_in_drawer(n: int) -> Array:
+	var xs: Array = []
+	if n <= 1:
+		return [DESIGN.x * 0.5]
+	var total_w: float = float(n - 1) * SEAT_SPACING
+	var drawer_centre: float = (DRAWER_LEFT + DRAWER_RIGHT) * 0.5
+	var start_x: float = drawer_centre - total_w * 0.5
+	for i in range(n):
+		xs.append(start_x + i * SEAT_SPACING)
 	return xs
 
 # Pick the board art for this board type and place it at the shared scale.
@@ -775,18 +836,20 @@ func _update_piece_labels() -> void:
 			if s.is_seat:
 				on_board = true
 				break
+		# If the piece is hidden by the tray filter, keep labels hidden.
+		var filtered_out := not on_board and not p.visible
 		if p.name_label:
-			p.name_label.visible = not on_board
+			p.name_label.visible = not on_board and not filtered_out
 		if p.cat_label:
-			p.cat_label.visible = not on_board
-		if on_board:
+			p.cat_label.visible = not on_board and not filtered_out
+		if on_board or filtered_out:
 			continue
 		var sp := p.global_position
 		var below := p.display_size.y * 0.5
 		if p.name_label:
-			p.name_label.position = Vector2(sp.x - 70, sp.y + below - 4)
+			p.name_label.position = Vector2(sp.x - 70, sp.y + below)
 		if p.cat_label:
-			p.cat_label.position = Vector2(sp.x - 70, sp.y + below + 18)
+			p.cat_label.position = Vector2(sp.x - 70, sp.y + below + 22)
 
 # Export-safe lookup (no DirAccess folder scan, which fails in web builds).
 func _resolve_pedal(name: String) -> String:
@@ -837,6 +900,8 @@ func _piece_at(point: Vector2) -> Piece2D:
 	for n in kids:
 		if n is Piece2D:
 			var p: Piece2D = n
+			if not p.visible:
+				continue
 			var r := Rect2(p.position - p.display_size * 0.5, p.display_size)
 			if r.has_point(point):
 				return p
@@ -887,6 +952,7 @@ func _end_drag() -> void:
 				return
 		_place(piece, target)
 		_spawn_burst(_burst_center(piece))
+		_apply_tray_filter(true)
 		validate()
 		return
 
@@ -908,6 +974,7 @@ func _end_drag() -> void:
 	_place(piece, target)
 	if target.is_seat:
 		_spawn_burst(_burst_center(piece))
+	_apply_tray_filter(true)
 	validate()
 
 # Compute the visual centre of a piece's occupied seats (for burst effects).
@@ -927,25 +994,92 @@ func _find_empty_tray_slot() -> Slot2D:
 			return s
 	return null
 
+# Re-pack all visible tray pedals contiguously (no gaps) and centre the group.
+func _reorganize_tray() -> void:
+	var occupied: Array = []
+	for s in tray_slots:
+		if s.occupant and s.occupant.visible:
+			occupied.append(s)
+	var n: int = occupied.size()
+	if n == 0:
+		return
+	# Compute contiguous positions centred in the drawer.
+	var drawer_centre: float = (DRAWER_LEFT + DRAWER_RIGHT) * 0.5
+	var total_w: float = float(n - 1) * SEAT_SPACING
+	var start_x: float = drawer_centre - total_w * 0.5
+	for i in range(n):
+		var new_pos := Vector2(start_x + i * SEAT_SPACING, TRAY_Y)
+		var slot: Slot2D = occupied[i]
+		slot.anchor = new_pos
+		slot.position = new_pos
+		var piece: Piece2D = slot.occupant
+		if piece and piece != dragging:
+			if piece.move_tween and piece.move_tween.is_valid():
+				piece.move_tween.kill()
+			piece.prev_pos = piece.position
+			piece.move_tween = piece.create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+			piece.move_tween.tween_property(piece, "position", new_pos, 0.22)
+		else:
+			piece.position = new_pos
+		if slot.marker:
+			slot.marker.position = Vector2(-slot.marker.size.x * 0.5, -slot.marker.size.y * 0.5)
+
 func _spawn_burst(pos: Vector2) -> void:
 	var fx := BurstEffect.new()
 	fx.position = pos
 	fx.z_index = 20                       # above the pedals
 	world_root.add_child(fx)
 
+# Small puff when a pedal is hidden by a filter.
+func _puff_pedal(piece: Piece2D) -> void:
+	var fx := BurstEffect.new()
+	fx.position = piece.position
+	fx.z_index = 20
+	fx.scale = Vector2(0.4, 0.4)
+	fx.modulate = Color(1, 1, 1, 0.5)
+	world_root.add_child(fx)
+
+# Shake a filter button given its group name (e.g. "Modulation").
+func _shake_filter_button_for(group_name: String) -> void:
+	for entry in tray_filter_buttons:
+		var g: String = entry["group"]
+		if g != group_name:
+			continue
+		var btn: Button = entry["btn"]
+		if btn == null:
+			return
+		if btn.has_meta("shake_tween"):
+			var old: Tween = btn.get_meta("shake_tween")
+			if old and old.is_valid():
+				old.kill()
+		btn.rotation_degrees = 0.0
+		var t := create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		t.tween_property(btn, "rotation_degrees", 5.0, 0.04)
+		t.tween_property(btn, "rotation_degrees", -4.0, 0.06)
+		t.tween_property(btn, "rotation_degrees", 3.0, 0.05)
+		t.tween_property(btn, "rotation_degrees", 0.0, 0.05)
+		btn.set_meta("shake_tween", t)
+		return
+
 # Show / hide every slot's drop-target marker (seats + tray) — only on while dragging.
 func _set_slot_markers(on: bool) -> void:
 	for slot in (seats + tray_slots):
-		if (slot as Slot2D).marker:
-			(slot as Slot2D).marker.visible = on
+		var s: Slot2D = slot
+		if s.marker:
+			# Never show tray slot markers.
+			if not s.is_seat:
+				s.marker.visible = false
+			else:
+				s.marker.visible = on
 
 func _nearest_slot(pos: Vector2) -> Slot2D:
 	var best: Slot2D = null
 	var best_d := SNAP_DIST
 	for slot in (seats + tray_slots):
 		var s: Slot2D = slot
+		var snap_dist := SNAP_DIST * 3.0 if not s.is_seat else SNAP_DIST
 		var d := pos.distance_to(s.anchor)
-		if d <= best_d:
+		if d <= snap_dist and d < best_d:
 			best_d = d
 			best = s
 	return best
@@ -1493,6 +1627,8 @@ func _build_ui() -> void:
 
 	_build_pedal_info(root, bold_font)
 	_build_tracker(root, bold_font)
+	# Tray filter bar — rebuilt per stage.
+	_build_tray_filter(root, bold_font)
 	_build_results(bold_font)
 
 # Stage-complete email: cute stars, the order's result text, and the three
@@ -2146,12 +2282,12 @@ func _populate_results_preview() -> void:
 	var preview_scale := (inner_size - padding_px * 2.0) / board_world_w_scaled
 
 	# Background.
-	var bg_tex = load(BG_PNG)
+	var bg_tex = load(PHOTO_BG_PNG)
 	if bg_tex:
 		var bg := Sprite2D.new()
 		bg.texture = bg_tex
 		bg.centered = true
-		bg.position = (DESIGN * 0.5 - world_center) * preview_scale
+		bg.position = Vector2.ZERO
 		bg.scale = Vector2(preview_scale, preview_scale)
 		bg.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 		pivot.add_child(bg)
@@ -2225,6 +2361,7 @@ func _animate_results() -> void:
 
 	# Mail icon — slide off-screen to the right.
 	if mail_root:
+		_stop_mail_float()
 		var mail_target_x := DESIGN.x + 200.0
 		results_seq_tween.tween_property(mail_root, "offset_left", mail_target_x, 0.35).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 		results_seq_tween.tween_property(mail_root, "offset_right", mail_target_x, 0.35).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
@@ -2409,10 +2546,182 @@ func _build_tracker(root: Control, bold_font) -> void:
 func _ignore_mouse(c: Control) -> void:
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for ch in c.get_children():
-		if ch is Control:
-			_ignore_mouse(ch)
+			if ch is Control:
+				_ignore_mouse(ch)
 
-# A small coloured circle for the header's "traffic lights".
+	# Map a CSV Category 2 value to a standard filter group.
+func _filter_group(cat2: String) -> String:
+	match cat2.to_lower().strip_edges():
+		"gain":
+			return "Gain"
+		"dynamic":
+			return "Dynamic"
+		"modulation":
+			return "Modulation"
+		"delay":
+			return "Ambience"
+	return ""
+
+# Build the tray filter bar — a row of pill buttons centred above the drawer.
+# Added to world_root so z_index works alongside the board/pedals.
+func _build_tray_filter(root: Control, bold_font) -> void:
+	var bar := HBoxContainer.new()
+	bar.position = Vector2(DESIGN.x * 0.5 - 300, 320)
+	bar.size = Vector2(600, 36)
+	bar.z_index = -21
+	bar.add_theme_constant_override("separation", 8)
+	bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	var sb_off := StyleBoxFlat.new()
+	sb_off.bg_color = Color("#D3C1A0")
+	sb_off.set_corner_radius_all(15)
+	sb_off.set_border_width_all(4)
+	sb_off.border_color = Color("#3F3F56")
+	sb_off.content_margin_left = 14
+	sb_off.content_margin_right = 14
+	sb_off.content_margin_top = 6
+	sb_off.content_margin_bottom = 6
+	var sb_on := StyleBoxFlat.new()
+	sb_on.bg_color = Color("#FCF8EE")
+	sb_on.set_corner_radius_all(15)
+	sb_on.set_border_width_all(4)
+	sb_on.border_color = Color("#3F3F56")
+	sb_on.content_margin_left = 14
+	sb_on.content_margin_right = 14
+	sb_on.content_margin_top = 6
+	sb_on.content_margin_bottom = 6
+	bar.set_meta("sb_off", sb_off)
+	bar.set_meta("sb_on", sb_on)
+	bar.set_meta("bold_font", bold_font)
+	bar.set_meta("bar", bar)
+	bar.visible = false
+	world_root.add_child(bar)
+
+func _setup_tray_filter_buttons() -> void:
+	tray_filter_groups.clear()
+	tray_filter_buttons.clear()
+	var present := {}
+	for nm in pieces.keys():
+		var item = item_db.get_item(nm)
+		if item == null:
+			continue
+		var g := _filter_group(String(item.get("Category 2", "")))
+		if g != "":
+			present[g] = true
+	var order := ["Gain", "Dynamic", "Modulation", "Ambience"]
+	for g in order:
+		if present.has(g):
+			tray_filter_groups.append(g)
+	if tray_filter_groups.is_empty():
+		return
+	var bar: HBoxContainer = null
+	for c in world_root.get_children():
+		if c is HBoxContainer and c.has_meta("bar"):
+			bar = c
+			break
+	if bar == null:
+		return
+	for c in bar.get_children():
+		c.queue_free()
+	tray_filter_buttons.clear()
+	var sb_off: StyleBoxFlat = bar.get_meta("sb_off")
+	var sb_on: StyleBoxFlat = bar.get_meta("sb_on")
+	var bold_font = bar.get_meta("bold_font")
+	for i in range(tray_filter_groups.size()):
+		var g: String = tray_filter_groups[i]
+		var wrapper := Control.new()
+		wrapper.custom_minimum_size = Vector2(130, 60)
+		wrapper.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		wrapper.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		var btn := Button.new()
+		btn.text = g
+		btn.custom_minimum_size = Vector2(120, 50)
+		btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		btn.add_theme_font_size_override("font_size", 18)
+		btn.add_theme_color_override("font_color", Color("#3F3F56"))
+		btn.add_theme_color_override("font_hover_color", Color("#3F3F56"))
+		btn.add_theme_color_override("font_pressed_color", Color("#3F3F56"))
+		btn.add_theme_color_override("font_focus_color", Color("#3F3F56"))
+		btn.set_meta("inactive_fg", Color("#3F3F56"))
+		btn.set_meta("active_fg", Color("#3F3F56"))
+		if bold_font:
+			btn.add_theme_font_override("font", bold_font)
+		btn.pressed.connect(_on_filter_pressed.bind(i))
+		btn.position = Vector2(5, 5)
+		wrapper.add_child(btn)
+		tray_filter_buttons.append({"btn": btn, "wrapper": wrapper, "group": g})
+		bar.add_child(wrapper)
+	tray_filter_idx = 0
+	bar.visible = true
+	# Set initial active style on first button.
+	if tray_filter_buttons.size() > 0:
+		var first_entry = tray_filter_buttons[0]
+		var first_btn: Button = first_entry["btn"]
+		first_btn.add_theme_stylebox_override("normal", sb_on)
+		first_btn.add_theme_stylebox_override("hover", sb_on)
+		var fg: Color = first_btn.get_meta("active_fg")
+		first_btn.add_theme_color_override("font_color", fg)
+		first_btn.add_theme_color_override("font_hover_color", fg)
+		first_btn.add_theme_color_override("font_pressed_color", fg)
+		first_btn.add_theme_color_override("font_focus_color", fg)
+		first_btn.position = Vector2(5, 14)
+
+func _on_filter_pressed(idx: int) -> void:
+	if idx < 0 or idx >= tray_filter_groups.size():
+		return
+	if idx == tray_filter_idx:
+		return  # Already active, ignore.
+	tray_filter_idx = idx
+	_apply_tray_filter()
+
+func _apply_tray_filter(animate_hide := false) -> void:
+	if tray_filter_groups.is_empty():
+		return
+	var active_group: String = tray_filter_groups[tray_filter_idx]
+	for entry in tray_filter_buttons:
+		var btn: Button = entry["btn"]
+		var is_active: bool = entry["group"] == active_group
+		var n_style: StyleBoxFlat = bar_meta("sb_on") if is_active else bar_meta("sb_off")
+		btn.add_theme_stylebox_override("normal", n_style)
+		btn.add_theme_stylebox_override("hover", n_style)
+		var fg: Color = btn.get_meta("active_fg") if is_active else btn.get_meta("inactive_fg")
+		btn.add_theme_color_override("font_color", fg)
+		btn.add_theme_color_override("font_hover_color", fg)
+		btn.add_theme_color_override("font_pressed_color", fg)
+		btn.add_theme_color_override("font_focus_color", fg)
+		btn.position = Vector2(5, 14) if is_active else Vector2(5, 5)
+	for nm in pieces:
+		var piece: Piece2D = pieces[nm]
+		var in_tray := false
+		for s in piece.occupied_seats:
+			if not s.is_seat:
+				in_tray = true
+				break
+		if not in_tray:
+			continue
+		var item = item_db.get_item(nm)
+		if item == null:
+			continue
+		var g: String = _filter_group(String(item.get("Category 2", "")))
+		var match: bool = g == active_group
+		if not match and piece.visible:
+			# Pedal is being hidden by the filter.
+			if animate_hide:
+				_puff_pedal(piece)
+				_shake_filter_button_for(g)
+		piece.visible = match
+		if piece.name_label:
+			piece.name_label.visible = match
+		if piece.cat_label:
+			piece.cat_label.visible = match
+	_reorganize_tray()
+
+func bar_meta(key: String):
+	for c in world_root.get_children():
+		if c is HBoxContainer and c.has_meta("bar"):
+			return c.get_meta(key)
+	return null
+
 func _dot(color: Color) -> Control:
 	var d := Panel.new()
 	d.custom_minimum_size = Vector2(13, 13)
@@ -2790,6 +3099,7 @@ func _mail_apply_corner() -> void:
 	mail_root.offset_right = MAIL_CENTER.x + mail_w * 0.5
 	mail_root.offset_top = MAIL_CENTER.y - mail_h * 0.5
 	mail_root.offset_bottom = MAIL_CENTER.y + mail_h * 0.5
+	_start_mail_float()
 
 # Snap the mail icon to screen centre (anchored TOP_RIGHT, so x is from the right edge).
 func _mail_apply_center() -> void:
@@ -3068,6 +3378,24 @@ func _shake_mail() -> void:
 	mail_shake_tween.tween_property(mail_root, "rotation_degrees", 4.0, 0.06)
 	mail_shake_tween.tween_property(mail_root, "rotation_degrees", 0.0, 0.06)
 
+# Gentle floating animation for the mail icon — subtle bobbing in place.
+func _start_mail_float() -> void:
+	if mail_root == null:
+		return
+	_stop_mail_float()
+	var base_top := mail_root.offset_top
+	var base_bottom := mail_root.offset_bottom
+	mail_float_tween = create_tween().set_loops().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	mail_float_tween.tween_property(mail_root, "offset_top", base_top - 3.0, 1.8)
+	mail_float_tween.parallel().tween_property(mail_root, "offset_bottom", base_bottom - 3.0, 1.8)
+	mail_float_tween.tween_property(mail_root, "offset_top", base_top + 3.0, 1.8)
+	mail_float_tween.parallel().tween_property(mail_root, "offset_bottom", base_bottom + 3.0, 1.8)
+
+func _stop_mail_float() -> void:
+	if mail_float_tween != null and mail_float_tween.is_valid():
+		mail_float_tween.kill()
+		mail_float_tween = null
+
 func _on_next() -> void:
 	_transition_to_stage(current_stage + 1)
 
@@ -3152,6 +3480,7 @@ func _enter_intro_state() -> void:
 		rules_panel.offset_right = RULES_HIDDEN_LEFT + RULES_WIDTH
 	_tracker_set_hidden(true, true)
 	_update_mail_icon()        # closed-mail texture + sizes (skips repositioning)
+	_stop_mail_float()
 	_mail_apply_center()
 	if mail_root:
 		mail_root.scale = Vector2.ZERO
