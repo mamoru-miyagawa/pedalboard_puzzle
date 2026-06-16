@@ -64,7 +64,7 @@ const MAIL_SHADOW_OFFSET := Vector2(3, 6)   # drop shadow under the icon (button
 const MAIL_DOT_SIZE := 18.0                 # red notification badge diameter
 const MAIL_DOT_COLOR := Color("#e6483d")
 
-const GAME_VERSION := "0.01"
+const GAME_VERSION := "0.02"
 const ICON_PASS := "res://assets/ui/icon_pass.png"
 const ICON_FAIL := "res://assets/ui/icon_fail.png"
 const ICON_PENDING := "res://assets/ui/icon_pending.png"
@@ -334,7 +334,9 @@ func _save_progress() -> void:
 			earned = 2
 	if stage_stars.size() <= current_stage:
 		stage_stars.resize(current_stage + 1)
-	stage_stars[current_stage] = max(stage_stars[current_stage] if current_stage < stage_stars.size() else 0, earned)
+	var star_prev = stage_stars[current_stage]
+	var prev_stars: int = star_prev if star_prev != null else 0
+	stage_stars[current_stage] = max(prev_stars, earned)
 	for i in range(hi + 1):
 		cfg.set_value("progress", "stage_%d_stars" % i, stage_stars[i] if i < stage_stars.size() else 0)
 	cfg.set_value("settings", "language", settings_language)
@@ -795,6 +797,10 @@ func _norm(s: String) -> String:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
+			# Click during intro dismisses the rules panel first (it may block pedals).
+			if intro_active and rules_open:
+				_set_rules_open(false)
+				return
 			_try_start_drag(event.position)
 			# A press that reaches here is outside the (input-blocking) email card,
 			# so a click in empty space dismisses an open email.
@@ -2033,8 +2039,8 @@ func _populate_results_preview() -> void:
 	pf.border_color = Color.WHITE
 
 	# Wrapper Node2D — position + rotation cascade to ALL children.
-	var cx := 870.0
-	var cy := 160.0
+	var cx := 1000.0
+	var cy := 200.0
 	var rot := randf_range(-3.0, 3.0)
 
 	var wrapper := Node2D.new()
@@ -2211,11 +2217,14 @@ func _play_star_sequence() -> void:
 		s.scale = Vector2.ONE
 	if results_star_tween != null and results_star_tween.is_valid():
 		results_star_tween.kill()
+	# How many stars did we earn? 1 for completing all normal tasks, +1 for secret.
+	var earned: int = 1 + (1 if secret_just_completed and max_stars >= 2 else 0)
 	results_star_tween = create_tween()
 	results_star_tween.tween_interval(0.5)   # let the window settle first
 	for i in range(results_stars.size()):
-		results_star_tween.tween_callback(_fill_star.bind(i))
-		results_star_tween.tween_interval(0.55)
+		if i < earned:
+			results_star_tween.tween_callback(_fill_star.bind(i))
+			results_star_tween.tween_interval(0.55)
 
 func _fill_star(idx: int) -> void:
 	if idx < 0 or idx >= results_stars.size():

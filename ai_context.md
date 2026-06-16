@@ -1,7 +1,7 @@
 # AI Context — Pedalboard Puzzle
 
 Knowledge handover for anyone (human or AI) picking up this project. Written 2026-06-12.
-Updated 2026-06-12 (settings, stage select, save system, export hardening).
+Updated 2026-06-16 (multi-slot pedals, 3×2 boards, secret tasks, polaroid preview, UI scaling).
 
 ## What this is
 
@@ -15,7 +15,7 @@ The game ships as a **web build** (WASM) served from GitHub Pages out of the `do
 
 - Main scene: `game2d.tscn` → `Game2D.gd` (this is what actually runs).
 - Theme/flavor: customers "email" you pedalboard build requests (the mail icon), you fulfill
-  the rules, and a results screen rates the build with 1–3 stars.
+  the rules, and a results screen rates the build with **1–2 stars**.
 
 ## Tech stack & conventions
 
@@ -25,7 +25,8 @@ The game ships as a **web build** (WASM) served from GitHub Pages out of the `do
 - **Design space:** fixed `1280×720` (`DESIGN` const), stretched with `canvas_items` / `expand`.
   All layout math is in design-space pixels.
 - **Input:** mouse-driven, with "Emulate Mouse From Touch" ON so tap-drag works on mobile.
-- **Persistence:** `user://save.cfg` stores unlocked stage, per-stage stars, language, music.
+- **Persistence:** `user://save.cfg` stores unlocked stage, per-stage stars, language, music,
+  per-stage secret task reveal state.
 
 ## Architecture / file map
 
@@ -35,53 +36,94 @@ The game ships as a **web build** (WASM) served from GitHub Pages out of the `do
 - **`StageDB.gd`** — loads stages + rules from `config/*stage*.csv` (one row per rule) or falls
   back to `config/stages.json`. The big header comment is the **authoritative spec** for the
   CSV columns and the selector mini-language. Converts 1-based sheet slots to 0-based engine.
+  Now parses `Secret` column and `Board` column (or `NxM` from Slots field).
 - **`RuleEngine.gd`** — pure, static rule evaluation + live tri-state (PENDING/PASS/FAIL) +
-  human-readable `describe()`. This is the heart of the puzzle logic. Rule types:
-  `position`, `adjacent`, `group_together`, `order`, `count`, `no_adjacent_same`.
-  Selectors pick items by `all` / `name` / `tag` / `field=value` / `same:field`.
+  human-readable `describe()`. Rule types: `position`, `adjacent`, `group_together`, `order`,
+  `count`, `no_adjacent_same`. Updated for 2D grid adjacency (`_neighbors()`, 4-connected)
+  and multi-slot pedal awareness (`_all_slots_of()`).
 
 ### Presentation layer
-- **`Game2D.gd`** — ~3100 lines, the whole game: world build, board/slot/piece creation,
+- **`Game2D.gd`** — ~3200 lines, the whole game: world build, board/slot/piece creation,
   drag handling, wobble/shadow/burst juice, rules tracker UI, mail panel, pedal spec card,
-  results screen, stage-select carousel, starting screen, settings. Function index is at the
-  top of the file (grep `^func`). It owns all UI; the data layer above stays unchanged.
-- **`Piece2D.gd`** / **`Slot2D.gd`** — thin data holders (a pedal token / a board-or-tray slot).
-  Logic lives in `Game2D.gd`; these just hold node refs + state.
+  results screen (with polaroid board preview), stage-select carousel, starting screen,
+  settings. Function index is at the top of the file (grep `^func`).
+- **`Piece2D.gd`** — holds `size_w`, `size_h`, `occupied_seats` for multi-slot pedals.
+- **`Slot2D.gd`** — holds `col`, `row` for grid positioning.
 - **`BurstEffect.gd`** — self-freeing "pop" particle ring played when a pedal lands.
 - **`DotLeader.gd`** — dotted leader line for the pedal spec sheet rows.
 
 ### Legacy / dead code — do not extend
-- **`Main.gd`** + `main.tscn` — the original "Seat the Guests" prototype (hardcoded guests,
-  5 seats). **Not the running scene.** Kept for reference only.
+- **`Main.gd`** + `main.tscn` — the original "Seat the Guests" prototype. Not the running scene.
 - **`Piece.gd`** / **`Slot.gd`** — old Control-based versions used by `Main.gd`.
 - **`Game2D copy.gd`** — a stub/leftover, ignore.
-- Mentions of a former `Game3D.gd` (GLTF 3D version) in comments — the project was ported
-  3D → 2D (see git history); the data layer was carried over unchanged.
 
 ### Config / content (`config/`)
-- **`pedalboard game info - Pedals.csv`** — the live item DB (`ITEMS_CSV` in `Game2D.gd`).
-  Columns: Pedal Name, Brand, Color, Category 1, Category 2, Size, Bypass, Era, Power, Extra.
-- **`stages.csv`** — the live stage/rule definitions (one row per rule; stage-level columns
-  only on the first row of each stage). `stages.json` is the fallback.
-- **`stage_mail.csv`** — the customer "email" shown per stage (sender, subject, body, avatar).
+- **`pedalboard game info - Pedals.csv`** — the live item DB (`ITEMS_CSV`). 16 pedals.
+  Columns: Pedal Name, **Asset** (filename stem), Brand, Color, Category 1, Category 2,
+  **Size** (e.g. "1x1", "2x1", "1x2"), Bypass, Era, Power, Extra, budget.
+- **`stages.csv`** — the live stage/rule definitions (one row per rule). Supports `Board`
+  column (e.g. "3x2") and `Secret` column (TRUE/FALSE for hidden bonus tasks).
+  `stages.json` is the fallback.
+- **`stage_mail.csv`** — the customer "email" per stage (sender, subject, body, avatar).
 - **`*.translation`** files + `settings_language` (`en` / `pt-br`) — localization.
-- `Sheet1.csv` is an older/simpler item sheet; the Pedals.csv is current.
 
 ### Assets (`assets/`)
-`pedals/`, `background/`, `starting_screen/`, `ui/` (icons, avatar), `fonts/` (Baloo2 family),
-plus reference images. Pedal art is mapped by name via `PEDAL_PATHS` in `Game2D.gd` — **folder
-scanning does not work in web exports**, so paths are hardcoded (a `Model` CSV column can
-override per item).
+- **`boards/`** — pedalboard art: `pedalboard.png` (3×1), `pedalboard_3x2.png` (3×2),
+  `pedalboard_4.png` (4×1), `pedalboard_5.png` (5×1).
+- **`pedals/`** — all 16 pedal art files (mapped by `Asset` CSV column or `PEDAL_PATHS`).
+- `background/`, `starting_screen/`, `ui/` (icons, avatar), `fonts/` (Baloo2 family).
+
+Pedal art paths are resolved in order: `Model` CSV column → `Asset` CSV column →
+`PEDAL_PATHS` hardcoded dict (fallback for web exports where folder scanning fails).
 
 ## How a stage runs (data flow)
 
 1. `_ready()` → `ItemDB.load_csv()` and `StageDB.load_stages()` populate items + stages.
-2. `show_stage(idx)` sets up slots/tray, instantiates `Piece2D` per item, applies the mail.
-3. `_build_display_groups()` bundles rules sharing a `(Stage, Group)` id into one AND-requirement
-   shown as a single tracker line (green only when ALL its rules pass).
-4. On every drop, `validate()` builds a `ctx = {order, num, db, items}` and asks `RuleEngine`
-   for each rule's live state, updates the tracker/progress, and detects stage completion.
-5. Board full + all rules pass → `_show_results()` rates the build (stars) and unlocks the next.
+2. `show_stage(idx)` sets up the board grid (cols × rows), instantiates `Piece2D` per item
+   with their parsed `Size`, applies the mail, and builds display groups (normal + secret).
+3. `_build_display_groups()` bundles rules sharing a `(Stage, Group)` id into one AND group.
+   Rules with `secret = true` are isolated into their own group (shown as "??????" until
+   completed once).
+4. On every drop, `validate()` builds a `ctx = {order, num, db, items, cols, rows}` and
+   asks `RuleEngine` for each rule's live state. Normal groups determine win/loss; the
+   secret group determines the bonus star. Updates rule tracker and detects completion.
+5. Board full + all *normal* tasks pass → `_show_results()` rates the build (1–2 stars)
+   and unlocks the next stage.
+
+## Multi-slot pedal system
+
+Pedals with `Size` > 1×1 (e.g. "2x1" Klon, "1x2" Wahwah) occupy multiple grid slots:
+- **2x1** extends leftward (+col), visually centred between the two slots
+- **1x2** extends upward (+row), visually centred between the two slots
+
+Placement rules:
+- `_occupied_seats_for()` computes which seats a piece would occupy from its anchor slot
+- `_end_drag()` checks conflicts on ALL occupied seats before placing
+- Displaced multi-slot pieces always go to the tray (can't swap into a single slot)
+- `_neighbors()` in RuleEngine uses 4-connected grid adjacency for 2D boards
+
+## Secrets & star system
+
+- Stages can have a **secret task** (set `Secret=TRUE` in CSV). Shown as "??????" until
+  completed at least once, then the real description is revealed forever (saved per-stage).
+- **1 star** = all normal tasks pass + board full
+- **2 stars** = 1-star condition + secret task also passes
+- Results screen shows "Task complete" and "Secret objective" checkboxes.
+- Max 2 star slots in both results and stage select carousel.
+
+## Results board preview (polaroid)
+
+The results screen shows a polaroid-style photo of the finished board:
+- Floating overlay at top-right, overlapping the results card
+- Random ±3° rotation for a "stuck-on" look
+- Thick white border with solid drop shadow (CARD_SHADOW, offset 4,8)
+- Appears 1s after the results card slides in (delayed reveal tween)
+- Photo content rotates with the border via a Node2D wrapper
+- Shadow: offset Panel with `CARD_SHADOW` (black, 0.22 alpha, no blur)
+
+Shadow guideline used throughout the project: **solid offset silhouette, no blur,
+`Color(0, 0, 0, 0.20)` (SHADOW_COLOR) or `Color(0, 0, 0, 0.22)` (CARD_SHADOW),
+offset `Vector2(4, 8)`**.
 
 ## Build & deploy
 
@@ -91,16 +133,18 @@ See **`EXPORT.md`** for the full, authoritative steps. Summary:
 - Head Include must load `coi-serviceworker.js` (cross-origin isolation; without it you get a
   blank page / "SharedArrayBuffer is not defined"). Keep `coi-serviceworker.js` and `.nojekyll`.
 - Re-export = overwrite `docs/index.html`, commit, push. Live at `https://<user>.github.io/<repo>/`.
-- The committed `docs/` build artifacts (`index.wasm` ~36 MB, `.pck`, etc.) are checked in.
+- Committed `docs/` build (`index.wasm` ~36 MB, `.pck`, etc.) are checked in.
 
 ## Authoring content (no code needed)
 
-- **New pedal:** add a row to `config/pedalboard game info - Pedals.csv`; add art + a
-  `PEDAL_PATHS` entry (or a `Model` column) so it renders.
+- **New pedal:** add a row to `config/pedalboard game info - Pedals.csv`; add art to
+  `assets/pedals/` with the filename matching the `Asset` column. The `Size` column
+  controls how many grid slots it occupies. The `PEDAL_PATHS` dict may need a new entry
+  for web export safety.
 - **New stage/rule:** add rows to `config/stages.csv`. Read the `StageDB.gd` header comment
-  first — it documents every column, the selector syntax (`all`, `name:`, `tag:`, `field=value`,
-  `same:field`), and the count operator word-aliases (use "at most", not `<=`, so Google Sheets
-  doesn't treat the cell as a formula). Rows with the same `(Stage, Group)` are AND-bundled.
+  first for the full column spec. Key columns: `Board` for grid layout (e.g. "3x2"),
+  `Secret=TRUE` for hidden bonus tasks. Rows with the same `(Stage, Group)` are AND-bundled.
+  The `Slots` field can include the layout (e.g. "6 (3x2)") — `StageDB` parses it.
 
 ## Gotchas & notes
 
@@ -109,10 +153,16 @@ See **`EXPORT.md`** for the full, authoritative steps. Summary:
 - **Live rule state is deliberately lenient:** "must sit next to" never goes red prematurely
   (the neighbor might still arrive); prohibitions go red instantly. See `RuleEngine.state()`.
 - **Slot indexing:** sheets are 1-based, the engine is 0-based — `StageDB` converts on load.
-- **`Game2D.gd` is monolithic** by design (one file owns all presentation). Use the function
-  list at the top to navigate; the data layer is where logic changes usually belong.
-- Lots of "juice" constants near the top of `Game2D.gd` (wobble, shadows, burst, slide tweens)
-  — safe to tune for feel without touching logic.
+- **Board grid:** col 0 = rightmost (first in signal chain), row 0 = bottom (row A).
+  Multi-slot pieces extend leftward (+col) and upward (+row).
+- **Control → Node2D rotation:** In Godot 4, rotating a Control (`Panel`) does NOT reliably
+  cascade to Sprite2D children. Always use a `Node2D` wrapper for rotation-heavy structures
+  (e.g. the polaroid preview uses a Node2D root whose transform cascades to all child types).
+- **`UI_SCALE = 0.85`** — global 15% scale reduction on pedals, boards, and slot markers.
+- **`SEAT_ROW_SPACING = 180`**, **`SEAT_BOTTOM_ROW_Y = 292`** — bottom row fixed, top row
+  stacks upward.
+- **`Game2D.gd` is monolithic** by design. Use the function list at the top to navigate.
+- Lots of "juice" constants near the top of `Game2D.gd` — safe to tune for feel.
 
 ## Quick start for a new contributor
 
@@ -120,25 +170,3 @@ See **`EXPORT.md`** for the full, authoritative steps. Summary:
 2. To change puzzles, edit `config/stages.csv` + `pedalboard game info - Pedals.csv`.
 3. To change game feel/UI, work in `Game2D.gd`. To change rule semantics, work in `RuleEngine.gd`.
 4. To ship, follow `EXPORT.md` and push `docs/`.
-
-## New features added 2026-06-12
-
-### Settings popup (Layer 8)
-- `_build_settings()` in Game2D.gd — card-styled modal (cream bg, tan header, drop shadow).
-- Language toggle: EN / PT-BR (persisted). Music checkbox.
-- "Clear progress" debug button — deletes `user://save.cfg`.
-
-### Save / progress system
-- `user://save.cfg` — `_save_progress()` on stage complete, `_load_progress()` on startup.
-- Stores `highest_stage`, per-stage `stage_N_stars`, language, music.
-
-### Stage selection screen (Layer 9)
-- "Stages" button on results card. Full-screen carousel with snap-to-center scrolling.
-- Tiles: unlocked show number + stars; locked show icon. Two-click to select.
-- Spacers so edge tiles can center. Unlock: `_get_saved_stage() + 1`.
-
-### Export hardening
-- **StageDB**: `_parse_fallback()` — hardcoded JSON for all 3 stages.
-- **ItemDB**: `_load_fallback()` — hardcoded dict array with all 5 pedals.
-- `_find_csv()` uses `FileAccess.open()` directly (not `file_exists`).
-- `_ready()` logs errors to browser console if data fails to load.
