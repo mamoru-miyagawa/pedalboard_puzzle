@@ -1003,13 +1003,17 @@ func _reorganize_tray() -> void:
 	var n: int = occupied.size()
 	if n == 0:
 		return
-	# Compute contiguous positions centred in the drawer.
+	# Compute total span from first centre to last centre.
+	var total_span: float = 0.0
+	for i in range(1, n):
+		var prev_w: int = occupied[i - 1].occupant.size_w
+		var cur_w: int = occupied[i].occupant.size_w
+		total_span += float(prev_w + cur_w) * 0.5 * SEAT_SPACING
 	var drawer_centre: float = (DRAWER_LEFT + DRAWER_RIGHT) * 0.5
-	var total_w: float = float(n - 1) * SEAT_SPACING
-	var start_x: float = drawer_centre - total_w * 0.5
+	var cx: float = drawer_centre - total_span * 0.5
 	for i in range(n):
-		var new_pos := Vector2(start_x + i * SEAT_SPACING, TRAY_Y)
 		var slot: Slot2D = occupied[i]
+		var new_pos := Vector2(cx, TRAY_Y)
 		slot.anchor = new_pos
 		slot.position = new_pos
 		var piece: Piece2D = slot.occupant
@@ -1023,6 +1027,12 @@ func _reorganize_tray() -> void:
 			piece.position = new_pos
 		if slot.marker:
 			slot.marker.position = Vector2(-slot.marker.size.x * 0.5, -slot.marker.size.y * 0.5)
+		# Advance by half of current + half of next piece width.
+		if i < n - 1:
+			var next_w: int = occupied[i + 1].occupant.size_w
+			cx += float(piece.size_w + next_w) * 0.5 * SEAT_SPACING
+		else:
+			cx += float(piece.size_w) * SEAT_SPACING
 
 func _spawn_burst(pos: Vector2) -> void:
 	var fx := BurstEffect.new()
