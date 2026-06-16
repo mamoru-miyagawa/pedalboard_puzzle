@@ -279,6 +279,7 @@ var start_root: Control
 var start_roll_a: Sprite2D
 var start_roll_b: Sprite2D
 var start_logo: Control
+var start_stages_btn: Button = null  # Stages button, stored for visibility toggling
 
 # Settings.
 var settings_language := "en"   # "en" or "pt-br"
@@ -315,6 +316,7 @@ func _ready() -> void:
 	_build_ui()
 	_build_starting_screen()
 	_load_progress()
+	_update_start_buttons()
 	# Don't show stage 0 yet — the starting screen is shown first.
 	# show_stage(0)
 
@@ -1224,6 +1226,27 @@ func _build_ui() -> void:
 	ver.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(ver)
 
+	# Debug "Title" button — bottom-right, returns to the starting screen.
+	var title_btn := Button.new()
+	title_btn.text = "Title"
+	title_btn.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	title_btn.offset_left = -160
+	title_btn.offset_top = -30
+	title_btn.offset_right = -85
+	title_btn.offset_bottom = -4
+	title_btn.add_theme_font_size_override("font_size", 11)
+	title_btn.add_theme_color_override("font_color", CARD_INK_SOFT)
+	var tsb := StyleBoxFlat.new()
+	tsb.bg_color = Color(1, 1, 1, 0.08)
+	tsb.set_corner_radius_all(4)
+	title_btn.add_theme_stylebox_override("normal", tsb)
+	var tsb_h := StyleBoxFlat.new()
+	tsb_h.bg_color = Color(1, 1, 1, 0.15)
+	tsb_h.set_corner_radius_all(4)
+	title_btn.add_theme_stylebox_override("hover", tsb_h)
+	title_btn.pressed.connect(_on_debug_title)
+	root.add_child(title_btn)
+
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 8)
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1819,10 +1842,12 @@ func _build_stage_select() -> void:
 	scroll.set_anchors_preset(Control.PRESET_CENTER)
 	scroll.offset_left = -DESIGN.x * 0.4
 	scroll.offset_right = DESIGN.x * 0.4
-	scroll.offset_top = -90
-	scroll.offset_bottom = 90
+	scroll.offset_top = -130
+	scroll.offset_bottom = 130
 	scroll.follow_focus = true
 	scroll.add_theme_stylebox_override("scroll", StyleBoxEmpty.new())
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	stage_select_scroll = scroll
 	stage_select_root.add_child(scroll)
 
@@ -1851,9 +1876,11 @@ func _build_stage_select() -> void:
 		_build_tile_contents(tile, i + 1, tile_idx <= unlocked)
 		# Let drags through to the ScrollContainer; clicks land here.
 		tile.mouse_filter = Control.MOUSE_FILTER_PASS
-		tile.gui_input.connect(_on_tile_gui.bind(tile_idx))
 		tiles_row.add_child(tile)
 		stage_select_tiles.append({"tile": tile, "idx": tile_idx})
+
+	# Handle clicks on the scroll container — find which tile was hit.
+	stage_select_scroll.gui_input.connect(_on_stage_scroll_gui)
 
 	# Right spacer — mirrors the left one.
 	var rpad := Control.new()
@@ -1870,7 +1897,11 @@ func _build_stage_select() -> void:
 	back_btn.offset_right = 110
 	back_btn.offset_top = DESIGN.y * 0.5 - 90
 	back_btn.offset_bottom = back_btn.offset_top + 54
-	back_btn.pressed.connect(func(): stage_select_root.visible = false)
+	back_btn.pressed.connect(func():
+		stage_select_root.visible = false
+		if start_root:
+			_update_start_buttons()
+			start_root.visible = true)
 	stage_select_root.add_child(back_btn)
 
 func _refresh_stage_tiles() -> void:
@@ -1928,6 +1959,17 @@ func _build_tile_contents(tile: Control, stage_num: int, unlocked: bool) -> void
 			s.add_theme_color_override("font_color", Color("#f2c14e"))
 			star_row.add_child(s)
 		tile.add_child(star_row)
+
+		# Stage name below the square.
+		var name_label := Label.new()
+		name_label.text = str(stages[stage_num - 1].get("name", "Stage %d" % stage_num))
+		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		name_label.add_theme_font_size_override("font_size", 14)
+		name_label.add_theme_color_override("font_color", Color.WHITE)
+		name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		name_label.custom_minimum_size = Vector2(tile_size * 1.2, 0)
+		tile.add_child(name_label)
 	else:
 		var lock_label := Label.new()
 		lock_label.text = "🔒"
@@ -1936,6 +1978,16 @@ func _build_tile_contents(tile: Control, stage_num: int, unlocked: bool) -> void
 		lock_label.add_theme_font_size_override("font_size", 32)
 		lock_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		square.add_child(lock_label)
+
+		# Stage name for locked stages too.
+		var name_label := Label.new()
+		name_label.text = str(stages[stage_num - 1].get("name", "Stage %d" % stage_num))
+		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name_label.add_theme_font_size_override("font_size", 14)
+		name_label.add_theme_color_override("font_color", Color("#7a7a9a"))
+		name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		name_label.custom_minimum_size = Vector2(tile_size * 1.2, 0)
+		tile.add_child(name_label)
 
 func _on_stage_tile_clicked(idx: int) -> void:
 	# If already centred — select it. Otherwise, snap to centre first.
@@ -1948,6 +2000,16 @@ func _on_stage_tile_clicked(idx: int) -> void:
 func _on_tile_gui(event: InputEvent, idx: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		_on_stage_tile_clicked(idx)
+
+# Handle clicks on the scroll container itself — find which tile was hit.
+func _on_stage_scroll_gui(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		var mp := stage_select_scroll.get_global_mouse_position()
+		for entry in stage_select_tiles:
+			var tile: Control = entry["tile"]
+			if tile.get_global_rect().has_point(mp):
+				_on_stage_tile_clicked(entry["idx"])
+				return
 
 func _is_tile_centred(idx: int) -> bool:
 	if stage_select_scroll == null:
@@ -3269,14 +3331,14 @@ func _build_starting_screen() -> void:
 	var start_bold: Font = load(FONT_BOLD)
 	var btn_col := VBoxContainer.new()
 	btn_col.set_anchors_preset(Control.PRESET_CENTER)
-	btn_col.add_theme_constant_override("separation", 20)
+	btn_col.add_theme_constant_override("separation", 12)
 	var btn_w := 220.0
 	btn_col.offset_left = -btn_w * 0.5
 	btn_col.offset_right = btn_w * 0.5
-	# Centre: place at ~78% down the screen. Offsets are relative to screen centre (y=360).
+	# Keep the original top position so Play stays put; extend downward.
 	var btn_centre_y := DESIGN.y * 0.78
 	btn_col.offset_top = btn_centre_y - 360 - 60
-	btn_col.offset_bottom = btn_centre_y - 360 + 60
+	btn_col.offset_bottom = btn_centre_y - 360 + 120
 	start_root.add_child(btn_col)
 
 	var start_btn := _make_game_button("Play", PROGRESS_FILL, Color.WHITE, start_bold)
@@ -3286,17 +3348,61 @@ func _build_starting_screen() -> void:
 	start_btn.pressed.connect(_on_start_pressed)
 	btn_col.add_child(start_btn)
 
+	# Stages button — hidden until progress exists (hidden by default).
+	var stages_btn := _make_game_button("Stages", Color("#8b7fc7"), Color.WHITE, start_bold)
+	stages_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	stages_btn.custom_minimum_size = Vector2(160, 48)
+	stages_btn.pressed.connect(_on_start_stages)
+	stages_btn.add_theme_color_override("font_color", Color.WHITE)
+	stages_btn.visible = false
+	start_stages_btn = stages_btn
+	btn_col.add_child(stages_btn)
+
 	var settings_btn := _make_game_button("Settings", Color("#6a6a8a"), Color.WHITE, start_bold)
 	settings_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	settings_btn.custom_minimum_size = Vector2(220, 54)
+	settings_btn.custom_minimum_size = Vector2(160, 48)
 	settings_btn.pressed.connect(_on_settings_pressed)
 	btn_col.add_child(settings_btn)
 
 func _on_start_pressed() -> void:
-	# Fade to white (with the stage title), swap in the stage, then play its intro.
+	# Go to the newest unlocked stage.
 	if start_root == null:
 		return
-	_transition_to_stage(0)
+	_transition_to_stage(_get_saved_stage())
+
+func _on_start_stages() -> void:
+	if start_root:
+		start_root.visible = false
+	if stage_select_root == null:
+		_build_stage_select()
+	_refresh_stage_tiles()
+	stage_select_root.visible = true
+	call_deferred("_snap_to_stage", min(_get_saved_stage() + 1, stages.size() - 1))
+
+func _on_debug_title() -> void:
+	# Return to the starting screen, clearing any game state.
+	if start_root == null:
+		return
+	_clear_stage()
+	if results_root:
+		results_root.visible = false
+	if stage_select_root:
+		stage_select_root.visible = false
+	if settings_root:
+		settings_root.visible = false
+	dragging = null
+	drag_from = null
+	_update_start_buttons()
+	start_root.visible = true
+
+func _update_start_buttons() -> void:
+	# Show the Stages button if progress exists (at least stage 0 completed).
+	if start_root == null:
+		return
+	var has_progress := stage_stars.size() > 0
+	if start_stages_btn:
+		start_stages_btn.visible = has_progress
+		return
 
 # --- Settings dialog -------------------------------------------------------
 func _build_settings() -> void:
