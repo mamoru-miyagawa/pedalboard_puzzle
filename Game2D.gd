@@ -2691,9 +2691,14 @@ func _on_filter_pressed(idx: int) -> void:
 	if idx < 0 or idx >= tray_filter_groups.size():
 		return
 	if idx == tray_filter_idx:
-		return  # Already active, ignore.
-	tray_filter_idx = idx
-	_apply_tray_filter()
+		return
+	# Store the target index, then close drawer, swap filter, and reopen.
+	var target_idx := idx
+	_close_drawer(func():
+		tray_filter_idx = target_idx
+		_apply_tray_filter()
+		_open_drawer()
+	)
 
 func _apply_tray_filter(animate_hide := false) -> void:
 	if tray_filter_groups.is_empty():
@@ -3401,10 +3406,18 @@ func _apply_drawer_offset(val: float) -> void:
 	if bar is HBoxContainer:
 		bar.position.y = 325.0 + val
 
-# Open the drawer with a tween.
+	# Open the drawer with a tween.
 func _open_drawer() -> void:
 	var t := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	t.tween_method(_apply_drawer_offset, _drawer_offset, 0.0, 0.6)
+
+# Close the drawer with a tween, then call `on_closed` when done.
+func _close_drawer(on_closed: Callable = Callable()) -> void:
+	var closed_val := -295.0
+	var t := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	t.tween_method(_apply_drawer_offset, _drawer_offset, closed_val, 0.35)
+	if on_closed.is_valid():
+		t.tween_callback(on_closed)
 
 # A quick rotational wobble on the mail icon, for a bit of impact when toggling.
 func _shake_mail() -> void:
