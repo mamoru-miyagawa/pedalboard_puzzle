@@ -2,6 +2,7 @@
 
 Knowledge handover for anyone (human or AI) picking up this project. Written 2026-06-12.
 Updated 2026-06-16 (multi-slot pedals, 3×2 boards, secret tasks, polaroid preview, UI scaling).
+Updated 2026-06-17 (tray filter button offset fix; known-issues list).
 
 ## What this is
 
@@ -43,7 +44,7 @@ The game ships as a **web build** (WASM) served from GitHub Pages out of the `do
   and multi-slot pedal awareness (`_all_slots_of()`).
 
 ### Presentation layer
-- **`Game2D.gd`** — ~3200 lines, the whole game: world build, board/slot/piece creation,
+- **`Game2D.gd`** — ~3400 lines, the whole game: world build, board/slot/piece creation,
   drag handling, wobble/shadow/burst juice, rules tracker UI, mail panel, pedal spec card,
   results screen (with polaroid board preview), stage-select carousel, starting screen,
   settings. Function index is at the top of the file (grep `^func`).
@@ -125,6 +126,43 @@ Shadow guideline used throughout the project: **solid offset silhouette, no blur
 `Color(0, 0, 0, 0.20)` (SHADOW_COLOR) or `Color(0, 0, 0, 0.22)` (CARD_SHADOW),
 offset `Vector2(4, 8)`**.
 
+## Drawer animation
+
+- Drawer sprite, tray pedals, and filter bar all shift together via `_drawer_offset`
+- Closed: offset = -295 (above screen), Open: offset = 0
+- `_open_drawer()`: `TRANS_BACK` / `EASE_OUT` / 0.5s
+- `_close_drawer(on_closed, duration, ease, trans)`: configurable
+- Stage completion close: 1.0s `TRANS_EXPO` `EASE_OUT`
+- Filter change close: 0.35s `TRANS_CUBIC` `EASE_IN` → swap → open
+- References: `_apply_drawer_offset()`, `_drawer_offset`, `_drawer_tween`, `_drawer_sprite`
+
+## Starting screen buttons
+
+- Play → newest unlocked stage
+- Stages button (hidden until progress, purple `#8b7fc7`)
+- Settings button
+- All styled with `_make_game_button()`
+
+## UI constants (tune here)
+
+All values from `Game2D.gd` constants section:
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `DESIGN` | `Vector2(1280, 720)` | Design space / virtual resolution |
+| `UI_SCALE` | `0.85` | Global pedal/board/slot scale reduction |
+| `SEAT_SPACING` | `100.0` | Horizontal gap between slot centres |
+| `SEAT_ROW_SPACING` | `140.0` | Vertical gap between row centres on multi-row boards |
+| `SEAT_BOTTOM_ROW_Y` | `240.0` | Fixed Y of the bottom row on multi-row boards |
+| `SEAT_Y` | `172.0` | Y of the row of seats on single-row boards |
+| `TRAY_Y` | `490.0` | Y of the spare-pedal tray |
+| `DRAWER_Y` | `425.0` | Drawer sprite centre Y |
+| `DRAWER_LEFT` | ~236 | Drawer horizontal left bound |
+| `DRAWER_RIGHT` | ~1044 | Drawer horizontal right bound |
+| `PEDAL_W` | `104.0` | On-screen width of a pedal |
+| `SNAP_DIST` | `92.0` | Drop-to-slot snap threshold |
+| `BOARD_PAD` | `70.0` | Board sprite extends past end seats |
+
 ## Build & deploy
 
 See **`EXPORT.md`** for the full, authoritative steps. Summary:
@@ -159,10 +197,12 @@ See **`EXPORT.md`** for the full, authoritative steps. Summary:
   cascade to Sprite2D children. Always use a `Node2D` wrapper for rotation-heavy structures
   (e.g. the polaroid preview uses a Node2D root whose transform cascades to all child types).
 - **`UI_SCALE = 0.85`** — global 15% scale reduction on pedals, boards, and slot markers.
-- **`SEAT_ROW_SPACING = 180`**, **`SEAT_BOTTOM_ROW_Y = 292`** — bottom row fixed, top row
+- **`SEAT_ROW_SPACING = 140`**, **`SEAT_BOTTOM_ROW_Y = 240`** — bottom row fixed, top row
   stacks upward.
 - **`Game2D.gd` is monolithic** by design. Use the function list at the top to navigate.
 - Lots of "juice" constants near the top of `Game2D.gd` — safe to tune for feel.
+- **Pedal label z-ordering:** labels are children of `Piece2D`, inheriting the piece's
+  `z_index`. Works for tray pedals (behind bg_2) but may have edge cases during drag transitions.
 
 ## Quick start for a new contributor
 
@@ -170,3 +210,79 @@ See **`EXPORT.md`** for the full, authoritative steps. Summary:
 2. To change puzzles, edit `config/stages.csv` + `pedalboard game info - Pedals.csv`.
 3. To change game feel/UI, work in `Game2D.gd`. To change rule semantics, work in `RuleEngine.gd`.
 4. To ship, follow `EXPORT.md` and push `docs/`.
+
+## Quick code reference
+
+| File | Role |
+|------|------|
+| `Game2D.gd` | ~3400 lines — all game logic |
+| `RuleEngine.gd` | Puzzle rule evaluation |
+| `StageDB.gd` | CSV/JSON stage loading |
+| `ItemDB.gd` | CSV item database |
+| `Piece2D.gd` / `Slot2D.gd` | Data holders |
+
+---
+
+## 2026-06-17 — Tray filter button offset fix
+
+### Problem
+
+When transitioning between stages, the tray filter button group (category filter pills above
+the drawer) shifted/offset to the right. First stage: centred correctly. Every subsequent
+`show_stage()` call: drifted right. Buttons also rendered **above** `bg_2` instead of between
+`bg_drawer` and `bg_2`.
+
+### Root causes
+
+1. **No persistent bar reference** — the `HBoxContainer` bar was looked up each time by
+   iterating `world_root.get_children()` via `bar_meta("bar")`, risking stale/wrong hits.
+2. **Missing z_index** — the bar had no explicit `z_index` (defaulted to 0), putting it
+   in front of `bg_2` (z=-19) instead of behind it.
+3. **`PRESET_FULL_RECT` under Node2D** — the bar used `set_anchors_and_offsets_preset`
+   which resolves against the viewport when the parent is a `Node2D`, causing inconsistent
+   sizing on subsequent stage loads.
+4. **Overlapping children on rebuild** — old wrappers were `queue_free()`d but not removed
+   until end of frame, so the HBoxContainer laid out old + new children together, then
+   shifted when the old ones were finally freed.
+
+### What was changed (`Game2D.gd`)
+
+- **Added class var** `tray_filter_bar: HBoxContainer = null` (~line 217) for direct access.
+- **`_build_tray_filter()`** — replaced `PRESET_FULL_RECT` with explicit anchors at 0,
+  explicit `position`/`size` (`Vector2(600, 50)` at `Vector2(DESIGN.x * 0.5 - 300, 320)`),
+  and `z_index = -21`. Stores reference in `tray_filter_bar`.
+- **`_setup_tray_filter_buttons()`** — uses `tray_filter_bar` directly. Restructured to
+  prepare all button wrappers in a temp array, then show the bar and add children so layout
+  recalculates with only the new children.
+- **`_clear_stage()`**, **`_apply_drawer_offset()`**, **`_apply_tray_filter()`** — all updated
+  to use `tray_filter_bar` directly instead of `bar_meta("bar")`.
+- **`bar_meta()` function** — now unused (can be safely deleted in a future cleanup).
+
+### Corrected layer order (z_index)
+
+| Element | z_index |
+|---------|---------|
+| bg_1 | -22 |
+| drawer sprite | -21 |
+| filter panel | -21 |
+| **filter bar** | **-21** (was 0) |
+| bg_2 | -19 |
+| board shadow | -11 |
+| board sprite | -10 |
+| pedals/UI | 0+ |
+
+## Current known issues
+
+1. **Pedal label z-ordering** — Labels are children of Piece2D, inheriting piece z_index.
+   Works for tray (behind bg_2) but may have edge cases during drag transitions.
+
+2. **Drawer close on stage complete** — May overlap with results animation timing.
+
+### Follow-up cleanup tasks
+
+- **Remove dead code**: `bar_meta(key: String)` at ~line 2782 is no longer called.
+- **`_drawer_group`**: declared at ~line 208 but never used — either remove or implement
+  the planned grouping of drawer-related elements.
+- **Architecture note**: the filter bar is a `Control` child of `world_root` (`Node2D`).
+  The explicit anchor+position workaround is safe, but a future refactor could move the
+  bar under a proper Control/CanvasLayer parent.
