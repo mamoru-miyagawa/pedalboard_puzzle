@@ -134,6 +134,14 @@ const DRAWER_H_PAD := 40.0      # horizontal padding from drawer edges
 const DRAWER_LEFT := 640.0 - 889.0 * 0.5 + DRAWER_H_PAD  # ≈236
 const DRAWER_RIGHT := 640.0 + 889.0 * 0.5 - DRAWER_H_PAD  # ≈1044
 const DRAWER_Y := 425.0  # vertical centre of the drawer sprite
+
+# Drawer open/close animation timing.
+const DRAWER_OPEN_TRANS := Tween.TRANS_BACK
+const DRAWER_OPEN_EASE := Tween.EASE_OUT
+const DRAWER_OPEN_DURATION := 0.5
+const DRAWER_CLOSE_TRANS := Tween.TRANS_CUBIC
+const DRAWER_CLOSE_EASE := Tween.EASE_IN
+const DRAWER_CLOSE_DURATION := 0.35
 const REF_PEDAL_W := 306.0     # DD-8 source texture width (the 1x1 reference pedal)
 const REF_PEDAL_H := 400.0     # DD-8 source texture height
 
@@ -199,12 +207,14 @@ var mail_by_stage := {}
 # Drawer animation.
 var _drawer_group: Node2D          # holds drawer sprite, tray slots, filter bar
 var _drawer_sprite: Sprite2D      # the drawer image
-var _drawer_offset: float = 0.0   # Y offset: 0 = open, -500 = closed (above screen)
+var _drawer_offset: float = 0.0   # Y offset: 0 = open, -295 = closed (above screen)
+var _drawer_tween: Tween
 
 # Tray filter.
 var tray_filter_groups: Array = []   # ordered category-2 group names present (e.g. ["Gain", "Modulation"])
 var tray_filter_idx: int = 0        # which filter is active (index into tray_filter_groups)
 var tray_filter_buttons: Array = []  # [{btn:Button, group:String}]
+var tray_filter_bar: HBoxContainer = null  # the bar holding filter buttons
 
 var world_root: Node2D          # holds background, board, slots, pieces
 var board_sprite: Sprite2D
@@ -494,7 +504,9 @@ func show_stage(idx: int) -> void:
 	current_stage = ((idx % n_stages) + n_stages) % n_stages
 	var stage: Dictionary = stages[current_stage]
 	_clear_stage()
-	# Reset drawer to closed position.
+	# Kill any leftover drawer animation and reset to closed position.
+	if _drawer_tween and _drawer_tween.is_valid():
+		_drawer_tween.kill()
 	_apply_drawer_offset(-295.0)
 
 	stage_rules = stage.get("rules", [])
@@ -639,9 +651,8 @@ func _clear_stage() -> void:
 		c.queue_free()
 	rule_rows.clear()
 	# Hide filter bar.
-	var bar = bar_meta("bar")
-	if bar is HBoxContainer:
-		bar.visible = false
+	if tray_filter_bar is HBoxContainer:
+		tray_filter_bar.visible = false
 
 # Evenly spaced, horizontally centred x positions for a row of n slots.
 func _row_xs(n: int) -> Array:
@@ -1004,7 +1015,7 @@ func _find_empty_tray_slot() -> Slot2D:
 	return null
 
 # Re-pack all visible tray pedals contiguously (no gaps) and centre the group.
-func _reorganize_tray() -> void:
+func _reorganize_tray(instant := false) -> void:
 	var occupied: Array = []
 	for s in tray_slots:
 		if s.occupant and s.occupant.visible:
@@ -1029,9 +1040,12 @@ func _reorganize_tray() -> void:
 		if piece and piece != dragging:
 			if piece.move_tween and piece.move_tween.is_valid():
 				piece.move_tween.kill()
-			piece.prev_pos = piece.position
-			piece.move_tween = piece.create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-			piece.move_tween.tween_property(piece, "position", new_pos, 0.22)
+			if instant:
+				piece.position = new_pos
+			else:
+				piece.prev_pos = piece.position
+				piece.move_tween = piece.create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+				piece.move_tween.tween_property(piece, "position", new_pos, 0.22)
 		else:
 			piece.position = new_pos
 		if slot.marker:
@@ -2236,8 +2250,10 @@ func _show_results() -> void:
 	# Populate the polaroid board preview.
 	_populate_results_preview()
 
-	# Pre-set the card size from content before animating.
-	call_deferred("_animate_results")
+	# Close the drawer smoothly, then animate the results card in.
+	_close_drawer(func():
+		call_deferred("_animate_results")
+	, 1.0, Tween.EASE_OUT, Tween.TRANS_EXPO)
 
 # Render a mini snapshot of the finished board in a floating polaroid frame
 # on top of the results screen, positioned at the top-right corner.
@@ -2586,12 +2602,29 @@ func _filter_group(cat2: String) -> String:
 # Build the tray filter bar — a row of pill buttons centred above the drawer.
 # Added to world_root so z_index works alongside the board/pedals.
 func _build_tray_filter(root: Control, bold_font) -> void:
+	# Panel wrapper to enforce fixed size (Controls under Node2D ignore .size).
+	var panel := Panel.new()
+	panel.position = Vector2(DESIGN.x * 0.5 - 300, 320)
+	panel.size = Vector2(600, 50)
+	panel.z_index = -21
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var psb := StyleBoxFlat.new()
+	psb.bg_color = Color.TRANSPARENT
+	panel.add_theme_stylebox_override("panel", psb)
+	world_root.add_child(panel)
+
 	var bar := HBoxContainer.new()
+	# Use anchors at 0 and explicit position/size to ensure consistent behavior.
+	bar.anchor_left = 0
+	bar.anchor_right = 0
+	bar.anchor_top = 0
+	bar.anchor_bottom = 0
+	bar.size = Vector2(600, 50)
 	bar.position = Vector2(DESIGN.x * 0.5 - 300, 320)
-	bar.size = Vector2(600, 36)
-	bar.z_index = -21
+	bar.z_index = -21  # Same as drawer, behind bg_2 (which is at -19)
 	bar.add_theme_constant_override("separation", 8)
 	bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	tray_filter_bar = bar  # Store direct reference
 	var sb_off := StyleBoxFlat.new()
 	sb_off.bg_color = Color("#D3C1A0")
 	sb_off.set_corner_radius_all(15)
@@ -2634,19 +2667,20 @@ func _setup_tray_filter_buttons() -> void:
 			tray_filter_groups.append(g)
 	if tray_filter_groups.is_empty():
 		return
-	var bar: HBoxContainer = null
-	for c in world_root.get_children():
-		if c is HBoxContainer and c.has_meta("bar"):
-			bar = c
-			break
+	var bar: HBoxContainer = tray_filter_bar
 	if bar == null:
 		return
+	# Clear old children.
 	for c in bar.get_children():
 		c.queue_free()
 	tray_filter_buttons.clear()
+
 	var sb_off: StyleBoxFlat = bar.get_meta("sb_off")
 	var sb_on: StyleBoxFlat = bar.get_meta("sb_on")
 	var bold_font = bar.get_meta("bold_font")
+
+	# Prepare button data before making bar visible.
+	var button_data: Array = []
 	for i in range(tray_filter_groups.size()):
 		var g: String = tray_filter_groups[i]
 		var wrapper := Control.new()
@@ -2670,10 +2704,15 @@ func _setup_tray_filter_buttons() -> void:
 		btn.pressed.connect(_on_filter_pressed.bind(i))
 		btn.position = Vector2(5, 5)
 		wrapper.add_child(btn)
-		tray_filter_buttons.append({"btn": btn, "wrapper": wrapper, "group": g})
-		bar.add_child(wrapper)
-	tray_filter_idx = 0
+		button_data.append({"btn": btn, "wrapper": wrapper, "group": g})
+
+	# Now show bar and add children.
 	bar.visible = true
+	bar.size = Vector2(600, 50)
+	for entry in button_data:
+		bar.add_child(entry["wrapper"])
+		tray_filter_buttons.append(entry)
+	tray_filter_idx = 0
 	# Set initial active style on first button.
 	if tray_filter_buttons.size() > 0:
 		var first_entry = tray_filter_buttons[0]
@@ -2696,18 +2735,18 @@ func _on_filter_pressed(idx: int) -> void:
 	var target_idx := idx
 	_close_drawer(func():
 		tray_filter_idx = target_idx
-		_apply_tray_filter()
+		_apply_tray_filter(false, true)
 		_open_drawer()
 	)
 
-func _apply_tray_filter(animate_hide := false) -> void:
+func _apply_tray_filter(animate_hide := false, instant := false) -> void:
 	if tray_filter_groups.is_empty():
 		return
 	var active_group: String = tray_filter_groups[tray_filter_idx]
 	for entry in tray_filter_buttons:
 		var btn: Button = entry["btn"]
 		var is_active: bool = entry["group"] == active_group
-		var n_style: StyleBoxFlat = bar_meta("sb_on") if is_active else bar_meta("sb_off")
+		var n_style: StyleBoxFlat = tray_filter_bar.get_meta("sb_on") if is_active else tray_filter_bar.get_meta("sb_off")
 		btn.add_theme_stylebox_override("normal", n_style)
 		btn.add_theme_stylebox_override("hover", n_style)
 		var fg: Color = btn.get_meta("active_fg") if is_active else btn.get_meta("inactive_fg")
@@ -2740,7 +2779,7 @@ func _apply_tray_filter(animate_hide := false) -> void:
 			piece.name_label.visible = match
 		if piece.cat_label:
 			piece.cat_label.visible = match
-	_reorganize_tray()
+	_reorganize_tray(instant)
 
 func bar_meta(key: String):
 	for c in world_root.get_children():
@@ -3402,22 +3441,25 @@ func _apply_drawer_offset(val: float) -> void:
 		s.position.y = s.anchor.y
 		if s.occupant:
 			s.occupant.position.y = s.anchor.y
-	var bar = bar_meta("bar")
-	if bar is HBoxContainer:
-		bar.position.y = 325.0 + val
+	if tray_filter_bar is HBoxContainer:
+		tray_filter_bar.position = Vector2(DESIGN.x * 0.5 - 300, 320.0 + val)
 
 	# Open the drawer with a tween.
 func _open_drawer() -> void:
-	var t := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	t.tween_method(_apply_drawer_offset, _drawer_offset, 0.0, 0.6)
+	if _drawer_tween and _drawer_tween.is_valid():
+		_drawer_tween.kill()
+	_drawer_tween = create_tween().set_trans(DRAWER_OPEN_TRANS).set_ease(DRAWER_OPEN_EASE)
+	_drawer_tween.tween_method(_apply_drawer_offset, _drawer_offset, 0.0, DRAWER_OPEN_DURATION)
 
 # Close the drawer with a tween, then call `on_closed` when done.
-func _close_drawer(on_closed: Callable = Callable()) -> void:
+func _close_drawer(on_closed: Callable = Callable(), duration: float = DRAWER_CLOSE_DURATION, ease := DRAWER_CLOSE_EASE, trans := DRAWER_CLOSE_TRANS) -> void:
+	if _drawer_tween and _drawer_tween.is_valid():
+		_drawer_tween.kill()
 	var closed_val := -295.0
-	var t := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	t.tween_method(_apply_drawer_offset, _drawer_offset, closed_val, 0.35)
+	_drawer_tween = create_tween().set_trans(trans).set_ease(ease)
+	_drawer_tween.tween_method(_apply_drawer_offset, _drawer_offset, closed_val, duration)
 	if on_closed.is_valid():
-		t.tween_callback(on_closed)
+		_drawer_tween.tween_callback(on_closed)
 
 # A quick rotational wobble on the mail icon, for a bit of impact when toggling.
 func _shake_mail() -> void:
