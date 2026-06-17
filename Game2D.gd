@@ -334,6 +334,9 @@ var stage_select_scroll: ScrollContainer
 var stage_snap_tween: Tween
 var stage_snap_timer: float = 0.0
 var stage_last_scroll: float = 0.0
+var stage_selected_idx: int = -1  # which stage tile is currently selected (highlighted/centered)
+var stage_drag_start_x: float = 0.0   # local X where a left-click began (for click vs drag)
+var stage_drag_start_scroll: float = 0.0  # scroll_horizontal at drag start
 
 func _ready() -> void:
 	item_db = ItemDB.new()
@@ -1975,9 +1978,26 @@ func _on_results_stages() -> void:
 		_build_stage_select()
 	# Refresh tiles in case progress changed.
 	_refresh_stage_tiles()
+	var target_idx: int = min(_get_saved_stage() + 1, stages.size() - 1)
+	# Set the selection state immediately (tile scales up, shows name).
+	stage_selected_idx = target_idx
+	_update_selected_tile()
+	# Snap to the target stage immediately.
+	_snap_to_stage_instant(target_idx)
 	stage_select_root.visible = true
-	# Snap to the current/latest unlocked stage on open.
-	call_deferred("_snap_to_stage", min(_get_saved_stage() + 1, stages.size() - 1))
+	# After layout is finalized (next frame), correct the scroll from actual
+	# tile positions so even edge cases (wrapper margins, variable widths) align.
+	call_deferred("_snap_to_stage_deferred", target_idx)
+
+func _snap_to_stage_deferred(tile_idx: int) -> void:
+	if stage_select_scroll == null or tile_idx < 0 or tile_idx >= stage_select_tiles.size():
+		return
+	var unlocked: int = _get_saved_stage() + 1
+	if tile_idx > unlocked:
+		return
+	stage_select_scroll.scroll_horizontal = _target_scroll_for_tile(tile_idx)
+	stage_selected_idx = tile_idx
+	_update_selected_tile()
 
 # Animate the results screen away: dim fades out, card slides right, mail+tracker return.
 func _close_results() -> void:
@@ -2038,7 +2058,7 @@ func _build_stage_select() -> void:
 	var title := Label.new()
 	title.text = "Stage Selection"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 48)
+	title.add_theme_font_size_override("font_size", 56)
 	title.add_theme_color_override("font_color", Color.WHITE)
 	if st_xbold:
 		title.add_theme_font_override("font", st_xbold)
@@ -2054,8 +2074,8 @@ func _build_stage_select() -> void:
 	scroll.set_anchors_preset(Control.PRESET_CENTER)
 	scroll.offset_left = -DESIGN.x * 0.4
 	scroll.offset_right = DESIGN.x * 0.4
-	scroll.offset_top = -130
-	scroll.offset_bottom = 130
+	scroll.offset_top = -240
+	scroll.offset_bottom = 240
 	scroll.follow_focus = true
 	scroll.add_theme_stylebox_override("scroll", StyleBoxEmpty.new())
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
@@ -2064,11 +2084,26 @@ func _build_stage_select() -> void:
 	stage_select_root.add_child(scroll)
 
 	stage_select_tiles.clear()
+
+	# Wrap tiles in a vertically-centred container so the selected tile's
+	# scaled-up square (1.13× from centre pivot) has headroom above.
+	var wrapper := VBoxContainer.new()
+	wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrapper.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(wrapper)
+
+	var top_spacer := Control.new()
+	top_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	wrapper.add_child(top_spacer)
+
 	var tiles_row := HBoxContainer.new()
 	tiles_row.add_theme_constant_override("separation", 28)
 	tiles_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	tiles_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	scroll.add_child(tiles_row)
+	wrapper.add_child(tiles_row)
+
+	var bottom_spacer := Control.new()
+	bottom_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	wrapper.add_child(bottom_spacer)
 
 	# Side spacers so the first and last tiles can scroll to centre.
 	var pad_w: float = scroll.offset_right - scroll.offset_left
@@ -2119,6 +2154,8 @@ func _build_stage_select() -> void:
 func _refresh_stage_tiles() -> void:
 	if stage_select_root == null:
 		return
+	# Reset selection; the caller will snap to the correct stage.
+	stage_selected_idx = -1
 	var unlocked: int = _get_saved_stage() + 1
 	for i in range(stage_select_tiles.size()):
 		if i >= stages.size():
@@ -2129,12 +2166,17 @@ func _refresh_stage_tiles() -> void:
 		for c in tile.get_children():
 			c.queue_free()
 		_build_tile_contents(tile, idx + 1, idx <= unlocked)
+	# Re-apply selection state after rebuilding.
+	_update_selected_tile()
 
 func _build_tile_contents(tile: Control, stage_num: int, unlocked: bool) -> void:
 	var tile_size := 140.0
 
 	var square := Panel.new()
 	square.custom_minimum_size = Vector2(tile_size, tile_size)
+	# Centre the pivot so scale transforms (1.13× for selected tiles) are
+	# applied symmetrically rather than from the top-left corner.
+	square.pivot_offset = Vector2(tile_size * 0.5, tile_size * 0.5)
 	var sq_sb := StyleBoxFlat.new()
 	if unlocked:
 		sq_sb.bg_color = Color("#eae4d3")
@@ -2146,6 +2188,8 @@ func _build_tile_contents(tile: Control, stage_num: int, unlocked: bool) -> void
 	sq_sb.set_border_width_all(3)
 	square.add_theme_stylebox_override("panel", sq_sb)
 	tile.add_child(square)
+	tile.set_meta("square", square)
+	tile.set_meta("unlocked", unlocked)
 
 	if unlocked:
 		var num_label := Label.new()
@@ -2172,7 +2216,8 @@ func _build_tile_contents(tile: Control, stage_num: int, unlocked: bool) -> void
 			star_row.add_child(s)
 		tile.add_child(star_row)
 
-		# Stage name below the square.
+		# Stage name below the square — only visible when selected.
+		# Width matches the square so the tile stays 140px wide.
 		var name_label := Label.new()
 		name_label.text = str(stages[stage_num - 1].get("name", "Stage %d" % stage_num))
 		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2180,8 +2225,10 @@ func _build_tile_contents(tile: Control, stage_num: int, unlocked: bool) -> void
 		name_label.add_theme_font_size_override("font_size", 14)
 		name_label.add_theme_color_override("font_color", Color.WHITE)
 		name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		name_label.custom_minimum_size = Vector2(tile_size * 1.2, 0)
+		name_label.custom_minimum_size = Vector2(tile_size, 0)
+		name_label.visible = false
 		tile.add_child(name_label)
+		tile.set_meta("name_label", name_label)
 	else:
 		var lock_label := Label.new()
 		lock_label.text = "🔒"
@@ -2191,80 +2238,204 @@ func _build_tile_contents(tile: Control, stage_num: int, unlocked: bool) -> void
 		lock_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		square.add_child(lock_label)
 
-		# Stage name for locked stages too.
+		# Stage name for locked stages — hidden by default (never shown in selection).
+		# Width matches the square so the tile stays 140px wide.
 		var name_label := Label.new()
 		name_label.text = str(stages[stage_num - 1].get("name", "Stage %d" % stage_num))
 		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		name_label.add_theme_font_size_override("font_size", 14)
 		name_label.add_theme_color_override("font_color", Color("#7a7a9a"))
 		name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		name_label.custom_minimum_size = Vector2(tile_size * 1.2, 0)
+		name_label.custom_minimum_size = Vector2(tile_size, 0)
+		name_label.visible = false
 		tile.add_child(name_label)
+		tile.set_meta("name_label", name_label)
+
+	# Let ALL mouse events pass through tile children to the ScrollContainer
+	# so scrolling and click detection work everywhere inside a tile.
+	_set_tree_mouse_filter(tile, Control.MOUSE_FILTER_PASS)
+
+# Recursively set mouse_filter on every child Control of `parent`.
+func _set_tree_mouse_filter(parent: Control, filter: int) -> void:
+	for c in parent.get_children():
+		if c is Control:
+			c.mouse_filter = filter
+			_set_tree_mouse_filter(c, filter)
 
 func _on_stage_tile_clicked(idx: int) -> void:
-	# If already centred — select it. Otherwise, snap to centre first.
-	if _is_tile_centred(idx):
-		stage_select_root.visible = false
-		_transition_to_stage(idx)
+	# If the clicked tile is already the selected (centered) one — choose the stage.
+	# Otherwise, snap to it (which also selects it).
+	if idx == stage_selected_idx:
+		# Fade to white above the stage select (layer 10), then transition.
+		# This way the stage select blocks the view of the game board underneath
+		# while the white overlay fades in.
+		var cover_layer := CanvasLayer.new()
+		cover_layer.layer = 10
+		add_child(cover_layer)
+		var cover := ColorRect.new()
+		cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		cover.color = Color(1, 1, 1, 0.0)
+		cover_layer.add_child(cover)
+		var fw := create_tween()
+		fw.tween_property(cover, "color:a", 1.0, 0.30).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+		fw.tween_callback(func():
+			stage_select_root.visible = false
+			# queue_free defers to end-of-frame, so the cover stays on layer 10
+			# until the transition has set up its own white flash on layer 7.
+			cover_layer.queue_free()
+			_transition_to_stage(idx))
 	else:
 		_snap_to_stage(idx)
 
-func _on_tile_gui(event: InputEvent, idx: int) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_on_stage_tile_clicked(idx)
-
-# Handle clicks on the scroll container itself — find which tile was hit.
+# Handle clicks on the scroll container — find which tile was hit using scroll math.
+# Also supports click-and-drag scrolling.
 func _on_stage_scroll_gui(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var mp := stage_select_scroll.get_global_mouse_position()
-		for entry in stage_select_tiles:
-			var tile: Control = entry["tile"]
-			if tile.get_global_rect().has_point(mp):
-				_on_stage_tile_clicked(entry["idx"])
-				return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			# Record drag start so we can distinguish click from drag.
+			stage_drag_start_x = event.position.x
+			stage_drag_start_scroll = stage_select_scroll.scroll_horizontal
+		else:
+			# Mouse released — if it was a click (no significant drag), handle it.
+			var drag_dist: float = abs(event.position.x - stage_drag_start_x)
+			if drag_dist < 10.0:
+				_handle_stage_click(event.position)
+	elif event is InputEventMouseMotion and event.button_mask & MOUSE_BUTTON_MASK_LEFT:
+		var dx: float = event.position.x - stage_drag_start_x
+		if abs(dx) > 8.0:
+			# Actually dragging — update scroll position.
+			var target: float = stage_drag_start_scroll - dx
+			# Clamp to valid scroll range (0 to content max).
+			var sb := stage_select_scroll.get_h_scroll_bar()
+			var max_s: float = sb.max_value if sb else 0.0
+			stage_select_scroll.scroll_horizontal = int(clampf(target, 0.0, max_s))
 
-func _is_tile_centred(idx: int) -> bool:
-	if stage_select_scroll == null:
-		return false
-	var view_w: float = stage_select_scroll.offset_right - stage_select_scroll.offset_left
-	var tile_w := 140.0
-	var gap := 28.0
-	var left_pad: float = view_w * 0.5 - tile_w * 0.5
-	var tile_cx: float = left_pad + float(idx) * (tile_w + gap) + tile_w * 0.5
-	var target: float = tile_cx - view_w * 0.5
-	return abs(stage_select_scroll.scroll_horizontal - target) < 4.0
+# Determine which tile is at the given local (ScrollContainer-relative) click position
+# and route the click.
+func _handle_stage_click(local_pos: Vector2) -> void:
+	# Convert local click position to global so we can test against tile rects.
+	var scroll_gpos: Vector2 = stage_select_scroll.get_global_position()
+	var click_global: Vector2 = scroll_gpos + local_pos
+	for entry in stage_select_tiles:
+		var tile: Control = entry["tile"]
+		var unlocked: bool = tile.get_meta("unlocked", false)
+		if not unlocked:
+			continue
+		if tile.get_global_rect().has_point(click_global):
+			_on_stage_tile_clicked(entry["idx"])
+			return
 
 func _snap_nearest() -> void:
 	if stage_select_scroll == null or stage_select_tiles.is_empty():
 		return
+	var scroll_gpos: Vector2 = stage_select_scroll.get_global_position()
 	var view_w: float = stage_select_scroll.offset_right - stage_select_scroll.offset_left
-	var view_cx: float = stage_select_scroll.scroll_horizontal + view_w * 0.5
-	var best_idx := 0
+	var view_cx_global: float = scroll_gpos.x + view_w * 0.5
+	var best_idx := -1
 	var best_dist: float = INF
-	var tile_w := 140.0
-	var gap := 28.0
-	var left_pad: float = view_w * 0.5 - tile_w * 0.5
 	for i in range(stage_select_tiles.size()):
-		var tile_cx: float = left_pad + float(i) * (tile_w + gap) + tile_w * 0.5
-		var d: float = abs(tile_cx - view_cx)
+		var entry = stage_select_tiles[i]
+		var tile: Control = entry["tile"]
+		if not tile.get_meta("unlocked", false):
+			continue
+		var tile_gpos: Vector2 = tile.get_global_position()
+		var tile_w_actual: float = tile.get_rect().size.x
+		var tile_cx: float = tile_gpos.x + tile_w_actual * 0.5
+		var d: float = abs(tile_cx - view_cx_global)
 		if d < best_dist:
 			best_dist = d
 			best_idx = i
-	_snap_to_stage(best_idx)
+	# Only snap if the nearest tile is different from the current selection.
+	if best_idx >= 0 and best_idx != stage_selected_idx:
+		_snap_to_stage(best_idx)
 
-func _snap_to_stage(tile_idx: int) -> void:
+# Compute the scroll offset needed to centre `tile_idx` in the viewport,
+# using the tile's actual layout position to handle any spacing correctly.
+func _target_scroll_for_tile(tile_idx: int) -> int:
 	if stage_select_scroll == null or tile_idx < 0 or tile_idx >= stage_select_tiles.size():
+		return 0
+	var entry = stage_select_tiles[tile_idx]
+	var tile: Control = entry["tile"]
+	var scroll_gpos: Vector2 = stage_select_scroll.get_global_position()
+	var view_w: float = stage_select_scroll.offset_right - stage_select_scroll.offset_left
+	var tile_gpos: Vector2 = tile.get_global_position()
+	var tile_w_actual: float = tile.get_rect().size.x
+	# Centre of the tile in the global coordinate space.
+	var tile_cx: float = tile_gpos.x + tile_w_actual * 0.5
+	# The viewport centre in the global coordinate space:
+	#   viewport_left = scroll_gpos.x
+	#   viewport_centre = scroll_gpos.x + view_w * 0.5
+	# The scroll offset needed:
+	#   tile_cx - scroll_gpos.x = position of tile centre within viewport
+	#   desired: tile_cx - scroll_gpos.x = view_w * 0.5
+	#   adjustment: (tile_cx - scroll_gpos.x) - view_w * 0.5
+	# The tile's `get_global_position()` already accounts for scroll offset:
+	#   tile_gpos = scroll_gpos + tile_layout_pos - scroll_horizontal
+	# So:
+	#   tile_centre_in_viewport = (tile_cx - scroll_gpos.x)
+	#   current_scroll = stage_select_scroll.scroll_horizontal
+	#   tile_centre_in_content = tile_cx - scroll_gpos.x + current_scroll
+	#   target_scroll = tile_centre_in_content - view_w * 0.5
+	var tile_cx_content: float = tile_cx - scroll_gpos.x + stage_select_scroll.scroll_horizontal
+	return int(tile_cx_content - view_w * 0.5)
+
+# Like _snap_to_stage but sets the scroll position instantly without animation.
+# Uses a simple mathematical formula (not position look-up) so it works correctly
+# before the container layout has been finalised (e.g. right after _refresh_stage_tiles
+# when old children are still queue_free'd and new ones haven't been sorted yet).
+func _snap_to_stage_instant(tile_idx: int) -> void:
+	if stage_select_scroll == null or tile_idx < 0 or tile_idx >= stage_select_tiles.size():
+		return
+	var unlocked: int = _get_saved_stage() + 1
+	if tile_idx > unlocked:
 		return
 	var tile_w := 140.0
 	var gap := 28.0
 	var view_w: float = stage_select_scroll.offset_right - stage_select_scroll.offset_left
 	var left_pad: float = view_w * 0.5 - tile_w * 0.5
-	var tile_cx: float = left_pad + float(tile_idx) * (tile_w + gap) + tile_w * 0.5
-	var target_scroll: float = tile_cx - view_w * 0.5
+	var first_tile_center: float = left_pad + gap + tile_w * 0.5
+	var tile_cx: float = first_tile_center + float(tile_idx) * (tile_w + gap)
+	stage_select_scroll.scroll_horizontal = int(tile_cx - view_w * 0.5)
+	stage_selected_idx = tile_idx
+	_update_selected_tile()
+
+func _snap_to_stage(tile_idx: int) -> void:
+	if stage_select_scroll == null or tile_idx < 0 or tile_idx >= stage_select_tiles.size():
+		return
+	var unlocked: int = _get_saved_stage() + 1
+	if tile_idx > unlocked:
+		return
+	var target_scroll: float = _target_scroll_for_tile(tile_idx)
 	if stage_snap_tween and stage_snap_tween.is_valid():
 		stage_snap_tween.kill()
 	stage_snap_tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	stage_snap_tween.tween_property(stage_select_scroll, "scroll_horizontal", target_scroll, 0.22)
+	stage_selected_idx = tile_idx
+	_update_selected_tile()
+
+func _update_selected_tile() -> void:
+	if stage_select_tiles.is_empty():
+		return
+	var sel_idx := stage_selected_idx
+	for entry in stage_select_tiles:
+		var tile: Control = entry["tile"]
+		var idx: int = entry["idx"]
+		var is_selected: bool = (idx == sel_idx)
+		if not tile.has_meta("square"):
+			continue
+		var square: Panel = tile.get_meta("square")
+		var name_label: Label = tile.get_meta("name_label") if tile.has_meta("name_label") else null
+		var unlocked: bool = tile.get_meta("unlocked", false)
+
+		if is_selected and unlocked:
+			var st := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+			st.tween_property(square, "scale", Vector2(1.13, 1.13), 0.22)
+			if name_label:
+				name_label.visible = true
+		else:
+			square.scale = Vector2(1.0, 1.0)
+			if name_label:
+				name_label.visible = false
 
 # Populate and show the stage-complete email: requester avatar/name + a thank-you
 # that reuses the stage's request text, then play the rating-star fill.
@@ -3545,13 +3716,13 @@ func _transition_to_stage(idx: int) -> void:
 	var ci := ((idx % n_stages) + n_stages) % n_stages
 	var stage: Dictionary = stages[ci]
 
-	# White overlay on its own top layer so it survives the scene swap underneath.
+	# White overlay — start fully opaque so nothing underneath is visible.
 	var flash_layer := CanvasLayer.new()
 	flash_layer.layer = 7
 	add_child(flash_layer)
 	var flash := ColorRect.new()
 	flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	flash.color = Color(1, 1, 1, 0.0)
+	flash.color = Color(1, 1, 1, 1.0)
 	flash.mouse_filter = Control.MOUSE_FILTER_STOP   # eat input during the transition
 	flash_layer.add_child(flash)
 
@@ -3587,9 +3758,7 @@ func _transition_to_stage(idx: int) -> void:
 	titles.add_child(name_lbl)
 
 	var tw := create_tween()
-	# Fade into white.
-	tw.tween_property(flash, "color:a", 1.0, 0.90).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	# Build the stage + set the intro start state while fully white.
+	# Build the stage underneath the white overlay immediately.
 	tw.tween_callback(func():
 		if start_root:
 			start_root.visible = false
@@ -3601,8 +3770,8 @@ func _transition_to_stage(idx: int) -> void:
 	tw.tween_property(titles, "modulate:a", 1.0, 0.40)
 	tw.tween_interval(1.5)
 	tw.tween_property(titles, "modulate:a", 0.0, 0.30)
-	# Slowly reveal the (dimmed) stage.
-	tw.tween_property(flash, "color:a", 0.0, 1.20).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	# Fade from white, revealing the dimmed stage underneath.
+	tw.tween_property(flash, "color:a", 0.0, 2.00).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tw.tween_callback(flash_layer.queue_free)
 	tw.tween_callback(_play_stage_intro)
 
@@ -3843,8 +4012,16 @@ func _on_start_stages() -> void:
 	if stage_select_root == null:
 		_build_stage_select()
 	_refresh_stage_tiles()
+	var target_idx: int = min(_get_saved_stage() + 1, stages.size() - 1)
+	# Set the selection state immediately (tile scales up, shows name).
+	stage_selected_idx = target_idx
+	_update_selected_tile()
+	# Set scroll position from the mathematical formula as a starting point.
+	_snap_to_stage_instant(target_idx)
 	stage_select_root.visible = true
-	call_deferred("_snap_to_stage", min(_get_saved_stage() + 1, stages.size() - 1))
+	# After layout is finalized (next frame), correct the scroll from actual
+	# tile positions so even edge cases (wrapper margins, variable widths) align.
+	call_deferred("_snap_to_stage_deferred", target_idx)
 
 func _on_debug_title() -> void:
 	# Return to the starting screen, clearing any game state.

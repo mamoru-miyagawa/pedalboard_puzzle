@@ -3,6 +3,7 @@
 Knowledge handover for anyone (human or AI) picking up this project. Written 2026-06-12.
 Updated 2026-06-16 (multi-slot pedals, 3×2 boards, secret tasks, polaroid preview, UI scaling).
 Updated 2026-06-17 (tray filter button offset fix; known-issues list).
+Updated 2026-06-17 (stage selection screen rewrite: selection state, centering, drag-scroll, transition fix).
 
 ## What this is
 
@@ -215,11 +216,93 @@ See **`EXPORT.md`** for the full, authoritative steps. Summary:
 
 | File | Role |
 |------|------|
-| `Game2D.gd` | ~3400 lines — all game logic |
+| `Game2D.gd` | ~3600 lines — all game logic |
 | `RuleEngine.gd` | Puzzle rule evaluation |
 | `StageDB.gd` | CSV/JSON stage loading |
 | `ItemDB.gd` | CSV item database |
 | `Piece2D.gd` / `Slot2D.gd` | Data holders |
+
+---
+
+## 2026-06-17 — Stage selection screen rewrite
+
+### Problem
+
+The stage selection carousel was unresponsive — clicks didn't register, drag-to-scroll didn't
+work, and the original implementation had no visual selection state (all tiles were the same
+size, names always visible). Tapping a stage never actually centred or selected it.
+
+### What was changed (`Game2D.gd`)
+
+#### Selection state
+- **`stage_selected_idx`** (line 337) — tracks which stage tile is currently selected.
+- **`_update_selected_tile()`** — iterates all tiles; the selected one gets its `square`
+  `Panel` scaled to **1.13×** (tweened, 0.22s) and its name `Label` shown; all others reset
+  to 1.0× and hide their name.
+- **`square.pivot_offset = Vector2(70, 70)`** — centres the pivot so scale transforms are
+  symmetric (Godot 4 `Control` defaults pivot to top-left, which shifted the visual centre).
+- **Name label** `custom_minimum_size` changed from `168` (`tile_size * 1.2`) to `140`
+  (`tile_size`) so the hidden label doesn't force the `VBoxContainer` tile wider than 140px,
+  breaking the centering math.
+- **`_on_stage_tile_clicked()`** — simplified: if `idx == stage_selected_idx` → enter stage;
+  otherwise → snap to it (selects it).
+
+#### Click detection
+- **`_on_stage_scroll_gui()`** — rewritten to handle both clicks and drags:
+  - Mouse press records start position.
+  - Mouse release: if drag distance < 10px → treat as click → `_handle_stage_click()`.
+  - Mouse motion with left button held → update `scroll_horizontal` (drag-to-scroll).
+- **`_handle_stage_click()`** — converts local click to global coords and checks
+  `tile.get_global_rect().has_point()` (after fixing `MOUSE_FILTER_PASS` on all tile
+  children so events actually reach the `ScrollContainer`).
+- **`_set_tree_mouse_filter()`** — recursively sets `MOUSE_FILTER_PASS` on every `Control`
+  descendant of a tile (square, labels, star row), so nothing blocks events from reaching
+  the `ScrollContainer`.
+
+#### Snap / centering
+- **`_snap_to_stage_instant()`** — sets `scroll_horizontal` instantly (no animation) using
+  a mathematical formula. Used on initial screen open before layout is finalised.
+- **`_snap_to_stage()`** — animated snap (0.22s `TRANS_CUBIC`). Uses `_target_scroll_for_tile()`
+  which reads actual tile positions from the rendered layout.
+- **`_target_scroll_for_tile()`** — position-based: reads `tile.get_global_position()` and
+  `scroll.get_global_position()` to compute the exact scroll needed to centre a tile.
+- **`_snap_to_stage_deferred()`** — position-based, called via `call_deferred()` in entry
+  points to correct the scroll after layout is finalised (solves the `queue_free` timing
+  issue where old children's positions are still present).
+- **`_snap_nearest()`** — rewritten to use actual tile global positions, skipping locked tiles.
+- **Initial snap** in `_on_start_stages()` and `_on_results_stages()`: sets `stage_selected_idx`
+  and calls `_update_selected_tile()` immediately, then `_snap_to_stage_instant()` (mathematical),
+  then `call_deferred("_snap_to_stage_deferred")` (position-based correction).
+
+#### Visual layout
+- **Scroll container height** increased from 260px to 480px (`offset_top` -240, `offset_bottom` 240)
+  to give headroom for the 1.13× scale expansion.
+- **Title font** increased from 48 to 56.
+- **Tiles wrapped in `VBoxContainer`** with expandable top/bottom spacers inside the
+  `ScrollContainer` so the tiles row is vertically centred with enough headroom.
+- **`tiles_row.size_flags_horizontal`** removed (default `SIZE_FILL | SIZE_EXPAND`)
+  — `SIZE_SHRINK_CENTER` caused the HBoxContainer to overflow from centre, breaking
+  horizontal tile positions.
+
+#### Stage transition fix
+- **`_transition_to_stage()`** — white overlay now starts at full opacity (`Color(1,1,1,1.0)`)
+  instead of transparent. The 0.90s fade-to-white step was removed, replaced by building
+  the stage immediately under the opaque white. Fade-from-white increased from 1.20s to 2.00s
+  for a smoother reveal.
+- **`_on_stage_tile_clicked()`** — fade-to-white overlay on layer 10 (above stage select
+  layer 9) before calling `_transition_to_stage()`, so the stage select screen itself fades
+  smoothly to white without exposing the game board underneath.
+
+#### Layer reference (stage selection)
+
+| Element | CanvasLayer |
+|---------|-------------|
+| Transition cover (fade from stage select) | 10 |
+| Stage select screen | 9 |
+| Transition flash | 7 |
+| Starting screen | 6 |
+| Results screen | 5 |
+| Game world | 4 and below |
 
 ---
 
