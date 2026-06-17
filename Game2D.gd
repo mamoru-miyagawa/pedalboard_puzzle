@@ -1072,6 +1072,47 @@ func _puff_pedal(piece: Piece2D) -> void:
 	fx.modulate = Color(1, 1, 1, 0.5)
 	world_root.add_child(fx)
 
+# Fly a ghost of the pedal toward its category filter button, then puff and shake.
+func _fly_pedal_to_filter(piece: Piece2D, group_name: String) -> void:
+	# Grab the texture from the piece's sprite (inside the body pivot).
+	var tex: Texture2D = null
+	var pivot := piece.body
+	if pivot and pivot.get_child_count() > 0:
+		var child := pivot.get_child(0)
+		if child is Sprite2D:
+			tex = child.texture
+
+	# Create a ghost sprite at the piece's current position.
+	var ghost := Sprite2D.new()
+	if tex:
+		ghost.texture = tex
+	ghost.centered = true
+	ghost.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	ghost.position = piece.position
+	ghost.scale = Vector2(ref_scale, ref_scale)
+	ghost.z_index = 20
+	ghost.modulate = Color(1, 1, 1, 0.85)
+	world_root.add_child(ghost)
+
+	# Find the target filter button's centre in world space.
+	var target_pos := piece.position
+	for entry in tray_filter_buttons:
+		if entry["group"] == group_name:
+			var btn: Button = entry["btn"]
+			target_pos = btn.global_position + btn.size * 0.5
+			break
+
+	# Animate ghost toward the button, shrinking and fading.
+	var tw := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(ghost, "position", target_pos, 0.35)
+	tw.parallel().tween_property(ghost, "scale", Vector2.ZERO, 0.30)
+	tw.parallel().tween_property(ghost, "modulate:a", 0.0, 0.30)
+	tw.tween_callback(func():
+		ghost.queue_free()
+		_puff_pedal(piece)
+		_shake_filter_button_for(group_name)
+	)
+
 # Shake a filter button given its group name (e.g. "Modulation").
 func _shake_filter_button_for(group_name: String) -> void:
 	for entry in tray_filter_buttons:
@@ -2772,8 +2813,7 @@ func _apply_tray_filter(animate_hide := false, instant := false) -> void:
 		if not match and piece.visible:
 			# Pedal is being hidden by the filter.
 			if animate_hide:
-				_puff_pedal(piece)
-				_shake_filter_button_for(g)
+				_fly_pedal_to_filter(piece, g)
 		piece.visible = match
 		if piece.name_label:
 			piece.name_label.visible = match
