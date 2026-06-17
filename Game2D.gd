@@ -3794,6 +3794,8 @@ func _build_settings() -> void:
 	hdr_sb.set_corner_radius_all(18)
 	hdr_sb.corner_radius_bottom_left = 0
 	hdr_sb.corner_radius_bottom_right = 0
+	hdr_sb.set_border_width_all(2)
+	hdr_sb.border_color = CARD_INK
 	header.add_theme_stylebox_override("panel", hdr_sb)
 	card_vbox.add_child(header)
 
@@ -3931,47 +3933,32 @@ func _build_settings() -> void:
 
 	# --- Credits page (hidden by default) ------------------------------------
 	_credits_content = VBoxContainer.new()
-	_credits_content.add_theme_constant_override("separation", 14)
+	_credits_content.add_theme_constant_override("separation", 10)
 	_credits_content.visible = false
 	settings_body_margin.add_child(_credits_content)
 
-	var intro_lbl := Label.new()
-	intro_lbl.text = "A game made with love by"
-	intro_lbl.add_theme_color_override("font_color", CARD_INK)
-	intro_lbl.add_theme_font_size_override("font_size", 16)
-	intro_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Simple centered credits text.
+	var top_pad := Control.new()
+	top_pad.custom_minimum_size = Vector2(0, 100)
+	_credits_content.add_child(top_pad)
+
+	var credit_lbl := Label.new()
+	credit_lbl.text = "A game made with love by"
+	credit_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	credit_lbl.add_theme_color_override("font_color", CARD_INK)
+	credit_lbl.add_theme_font_size_override("font_size", 18)
 	if bold_font:
-		intro_lbl.add_theme_font_override("font", bold_font)
-	_credits_content.add_child(intro_lbl)
+		credit_lbl.add_theme_font_override("font", bold_font)
+	_credits_content.add_child(credit_lbl)
 
 	var name_lbl := Label.new()
 	name_lbl.text = "Mamoru Miyagawa"
-	name_lbl.add_theme_color_override("font_color", CARD_INK)
-	name_lbl.add_theme_font_size_override("font_size", 22)
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_lbl.add_theme_color_override("font_color", CARD_INK)
+	name_lbl.add_theme_font_size_override("font_size", 20)
 	if bold_font:
 		name_lbl.add_theme_font_override("font", bold_font)
 	_credits_content.add_child(name_lbl)
-
-	_credits_content.add_child(_hline(CARD_DIVIDER, 1))
-
-	for role in ["Design", "Art", "Code", "Sound design"]:
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
-		var role_lbl := Label.new()
-		role_lbl.text = role + " by"
-		role_lbl.add_theme_color_override("font_color", CARD_INK_SOFT)
-		role_lbl.add_theme_font_size_override("font_size", 15)
-		role_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(role_lbl)
-		var val_lbl := Label.new()
-		val_lbl.text = "Mamoru Miyagawa" if role != "Code" and role != "Sound design" else "?"
-		val_lbl.add_theme_color_override("font_color", CARD_INK)
-		val_lbl.add_theme_font_size_override("font_size", 15)
-		if bold_font:
-			val_lbl.add_theme_font_override("font", bold_font)
-		row.add_child(val_lbl)
-		_credits_content.add_child(row)
 
 	var spacer_c := Control.new()
 	spacer_c.size_flags_vertical = Control.SIZE_EXPAND_FILL
