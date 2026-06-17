@@ -196,6 +196,11 @@ var mail_subject: Label
 var mail_intro: Label
 var mail_by_stage := {}
 
+# Drawer animation.
+var _drawer_group: Node2D          # holds drawer sprite, tray slots, filter bar
+var _drawer_sprite: Sprite2D      # the drawer image
+var _drawer_offset: float = 0.0   # Y offset: 0 = open, -500 = closed (above screen)
+
 # Tray filter.
 var tray_filter_groups: Array = []   # ordered category-2 group names present (e.g. ["Gain", "Modulation"])
 var tray_filter_idx: int = 0        # which filter is active (index into tray_filter_groups)
@@ -434,8 +439,10 @@ func _build_world() -> void:
 		dr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 		dr.z_index = -21
 		dr.scale = Vector2.ONE * (2.0 / 3.0)
+		_drawer_sprite = dr
 		world_root.add_child(dr)
-	add_bg_layer.call(bg_tex_2, -20)
+		_apply_drawer_offset(-295.0)
+	add_bg_layer.call(bg_tex_2, -19)
 
 	# Fallback if no textures loaded.
 	if not bg_tex_1 and not bg_tex_2:
@@ -487,6 +494,8 @@ func show_stage(idx: int) -> void:
 	current_stage = ((idx % n_stages) + n_stages) % n_stages
 	var stage: Dictionary = stages[current_stage]
 	_clear_stage()
+	# Reset drawer to closed position.
+	_apply_drawer_offset(-295.0)
 
 	stage_rules = stage.get("rules", [])
 	var item_names: Array = stage.get("items", [])
@@ -802,12 +811,12 @@ func _make_piece(item: Dictionary) -> Piece2D:
 		rect.add_theme_stylebox_override("panel", sb)
 		pivot.add_child(rect)
 
-	# Pedal name + Category 1 as crisp labels on the label layer, positioned
-	# under the pedal each frame in _update_piece_labels.
+	# Pedal name + Category 1 as children of the piece, so they inherit its z_index
+	# (behind bg_2 for tray pedals, on top for dragged pedals).
 	piece.name_label = _make_piece_label(piece.char_id, 18, CARD_INK)
 	piece.cat_label = _make_piece_label(String(item.get("Category 1", "")), 13, CARD_INK)
-	piece_label_root.add_child(piece.name_label)
-	piece_label_root.add_child(piece.cat_label)
+	piece.add_child(piece.name_label)
+	piece.add_child(piece.cat_label)
 	return piece
 
 func _make_piece_label(text: String, fsize: int, color: Color) -> Label:
@@ -825,8 +834,6 @@ func _make_piece_label(text: String, fsize: int, color: Color) -> Label:
 	return l
 
 func _update_piece_labels() -> void:
-	if piece_label_root == null:
-		return
 	for nm in pieces:
 		var p: Piece2D = pieces[nm]
 		var on_board := false
@@ -836,20 +843,22 @@ func _update_piece_labels() -> void:
 			if s.is_seat:
 				on_board = true
 				break
-		# If the piece is hidden by the tray filter, keep labels hidden.
 		var filtered_out := not on_board and not p.visible
+		# Labels are always visible for tray pedals (they render at the piece's
+		# z_index — behind bg_2 for tray, on top when dragged).
+		var show_labels := not on_board and not filtered_out
 		if p.name_label:
-			p.name_label.visible = not on_board and not filtered_out
+			p.name_label.visible = show_labels
 		if p.cat_label:
-			p.cat_label.visible = not on_board and not filtered_out
-		if on_board or filtered_out:
+			p.cat_label.visible = show_labels
+		if not show_labels:
 			continue
-		var sp := p.global_position
+		# Position relative to piece centre (labels are children of the piece).
 		var below := p.display_size.y * 0.5
 		if p.name_label:
-			p.name_label.position = Vector2(sp.x - 70, sp.y + below)
+			p.name_label.position = Vector2(-70, below)
 		if p.cat_label:
-			p.cat_label.position = Vector2(sp.x - 70, sp.y + below + 22)
+			p.cat_label.position = Vector2(-70, below + 22)
 
 # Export-safe lookup (no DirAccess folder scan, which fails in web builds).
 func _resolve_pedal(name: String) -> String:
@@ -1013,7 +1022,7 @@ func _reorganize_tray() -> void:
 	var cx: float = drawer_centre - total_span * 0.5
 	for i in range(n):
 		var slot: Slot2D = occupied[i]
-		var new_pos := Vector2(cx, TRAY_Y)
+		var new_pos := Vector2(cx, TRAY_Y + _drawer_offset)
 		slot.anchor = new_pos
 		slot.position = new_pos
 		var piece: Piece2D = slot.occupant
@@ -1179,6 +1188,8 @@ func _place(piece: Piece2D, slot: Slot2D, animate := false) -> void:
 		piece.wobble_vel = 0.0
 		if piece.body:
 			piece.body.rotation = 0.0
+	# Layer: board pedals on top (z=0), tray pedals behind bg_2 (z=-20).
+	piece.z_index = 0 if slot.is_seat else -20
 
 # --- Per-frame: follow cursor + wobble --------------------------------------
 func _process(delta: float) -> void:
@@ -3375,6 +3386,26 @@ func _set_rules_open(open: bool, instant := false) -> void:
 	if intro_active and not open:
 		_finish_intro()
 
+# Shift all drawer elements (drawer sprite, tray slots, tray pieces, filter bar)
+# by the given Y offset (-500 = closed above screen, 0 = open).
+func _apply_drawer_offset(val: float) -> void:
+	_drawer_offset = val
+	if _drawer_sprite:
+		_drawer_sprite.position.y = DRAWER_Y + val
+	for s in tray_slots:
+		s.anchor.y = TRAY_Y + val
+		s.position.y = s.anchor.y
+		if s.occupant:
+			s.occupant.position.y = s.anchor.y
+	var bar = bar_meta("bar")
+	if bar is HBoxContainer:
+		bar.position.y = 325.0 + val
+
+# Open the drawer with a tween.
+func _open_drawer() -> void:
+	var t := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	t.tween_method(_apply_drawer_offset, _drawer_offset, 0.0, 0.6)
+
 # A quick rotational wobble on the mail icon, for a bit of impact when toggling.
 func _shake_mail() -> void:
 	if mail_root == null:
@@ -3565,6 +3596,8 @@ func _finish_intro() -> void:
 		hud_margin.modulate = Color(1, 1, 1, 0.0)
 		var ht := create_tween()
 		ht.tween_property(hud_margin, "modulate:a", 1.0, 0.60).set_ease(Tween.EASE_OUT)
+	# Open the drawer.
+	_open_drawer()
 
 # --- Starting screen --------------------------------------------------------
 func _build_starting_screen() -> void:
