@@ -70,6 +70,9 @@ const ICON_PASS := "res://assets/ui/icon_pass.png"
 const ICON_FAIL := "res://assets/ui/icon_fail.png"
 const ICON_PENDING := "res://assets/ui/icon_pending.png"
 const AVATAR := "res://assets/ui/avatar.png"
+const INFO_BG := "res://assets/ui/info_bg.png"
+const INFO_MASK := "res://assets/ui/info_mask.png"
+const INFO_TEST_CONTENT := "res://assets/info/info_1.png"
 
 # Per-stage email content for the inbox card.
 const MAIL_CSV := "res://config/stage_mail.csv"
@@ -311,6 +314,10 @@ var start_roll_a: Sprite2D
 var start_roll_b: Sprite2D
 var start_logo: Control
 var start_stages_btn: Button = null  # Stages button, stored for visibility toggling
+var info_popup_root: Control
+var info_popup_card: Control
+var info_popup_tween: Tween
+var info_blur_mat: ShaderMaterial
 
 # Settings.
 var settings_language := "en"   # "en" or "pt-br"
@@ -3999,6 +4006,178 @@ func _build_starting_screen() -> void:
 	settings_btn.custom_minimum_size = Vector2(160, 48)
 	settings_btn.pressed.connect(_on_settings_pressed)
 	btn_col.add_child(settings_btn)
+
+	var info_btn := _make_game_button("Info", Color("#8b7fc7"), Color.WHITE, start_bold)
+	info_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	info_btn.custom_minimum_size = Vector2(160, 48)
+	info_btn.pressed.connect(_on_info_pressed)
+	btn_col.add_child(info_btn)
+
+func _on_info_pressed() -> void:
+	if info_popup_root == null:
+		_build_info_popup()
+	info_popup_root.visible = true
+
+	if info_popup_card == null:
+		return
+
+	# Kill any in-flight tween so we don't fight it.
+	if info_popup_tween and info_popup_tween.is_valid():
+		info_popup_tween.kill()
+
+	# Start below the screen, un-rotated.
+	var screen_h := DESIGN.y
+	var scaled_h: float = info_popup_card.offset_bottom - info_popup_card.offset_top
+	info_popup_card.set_meta("rest_top", info_popup_card.offset_top)
+	info_popup_card.set_meta("rest_bottom", info_popup_card.offset_bottom)
+	info_popup_card.offset_top = screen_h + 20.0
+	info_popup_card.offset_bottom = screen_h + 20.0 + scaled_h
+	info_popup_card.rotation_degrees = 0.0
+
+	info_popup_tween = create_tween().set_parallel(true).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	info_popup_tween.tween_property(info_popup_card, "offset_top", info_popup_card.get_meta("rest_top"), 0.50)
+	info_popup_tween.tween_property(info_popup_card, "offset_bottom", info_popup_card.get_meta("rest_bottom"), 0.50)
+	info_popup_tween.tween_property(info_popup_card, "rotation_degrees", -5.0, 0.50)
+	if info_blur_mat:
+		info_blur_mat.set_shader_parameter("strength", 0.0)
+		var mat := info_blur_mat
+		info_popup_tween.tween_method(func(v: float): mat.set_shader_parameter("strength", v), 0.0, 1.0, 0.50)
+
+func _on_info_close() -> void:
+	if info_popup_card == null:
+		if info_popup_root:
+			info_popup_root.visible = false
+		return
+
+	if info_popup_tween and info_popup_tween.is_valid():
+		info_popup_tween.kill()
+
+	var screen_h := DESIGN.y
+	var scaled_h: float = info_popup_card.offset_bottom - info_popup_card.offset_top
+
+	info_popup_tween = create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	info_popup_tween.tween_property(info_popup_card, "offset_top", screen_h + 20.0, 0.35)
+	info_popup_tween.tween_property(info_popup_card, "offset_bottom", screen_h + 20.0 + scaled_h, 0.35)
+	info_popup_tween.tween_property(info_popup_card, "rotation_degrees", 0.0, 0.35)
+	if info_blur_mat:
+		var mat := info_blur_mat
+		info_popup_tween.tween_method(func(v: float): mat.set_shader_parameter("strength", v), 1.0, 0.0, 0.35)
+	info_popup_tween.finished.connect(func():
+		if info_popup_root:
+			info_popup_root.visible = false
+		# Restore position for next open.
+		if info_popup_card and info_popup_card.has_meta("rest_top"):
+			info_popup_card.offset_top = info_popup_card.get_meta("rest_top")
+			info_popup_card.offset_bottom = info_popup_card.get_meta("rest_bottom")
+			info_popup_card.rotation_degrees = 0.0
+	)
+
+func _build_info_popup() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 9
+	add_child(layer)
+
+	info_popup_root = Control.new()
+	info_popup_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	info_popup_root.visible = false
+	layer.add_child(info_popup_root)
+
+	# Transparent full-screen rect — catches clicks outside the card to dismiss.
+	var dim := ColorRect.new()
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0, 0, 0, 0.0)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			_on_info_close()
+	)
+	info_popup_root.add_child(dim)
+
+	# Blur backdrop — blurs the screen behind, no darkening (darken = 0).
+	var blur_shader: Shader = load("res://BlurBackdrop.gdshader")
+	var blur_mat: ShaderMaterial = ShaderMaterial.new()
+	blur_mat.shader = blur_shader
+	blur_mat.set_shader_parameter("strength", 0.0)
+	info_blur_mat = blur_mat
+	var blur_bg := ColorRect.new()
+	blur_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	blur_bg.material = blur_mat
+	blur_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	info_popup_root.add_child(blur_bg)
+
+	# Load textures.
+	var bg_tex: Texture2D = load(INFO_BG)
+	var mask_tex: Texture2D = load(INFO_MASK)
+	var content_tex: Texture2D = load(INFO_TEST_CONTENT)
+	if bg_tex == null:
+		return
+
+	# Card sized to the background image.
+	var card_w: float = float(bg_tex.get_width())
+	var card_h: float = float(bg_tex.get_height())
+	# Scale down if larger than the design viewport (with margin).
+	var max_w := DESIGN.x * 0.85
+	var max_h := DESIGN.y * 0.85
+	var card_scale: float = min(1.0, min(max_w / card_w, max_h / card_h))
+
+	var card := Control.new()
+	card.set_anchors_preset(Control.PRESET_CENTER)
+	var scaled_w: float = card_w * card_scale
+	var scaled_h: float = card_h * card_scale
+	var vertical_bias: float = scaled_h * 0.3  # push toward bottom half (0 = center, 0.5 = bottom edge)
+	card.offset_left = -scaled_w * 0.5
+	card.offset_right = scaled_w * 0.5
+	card.offset_top = -scaled_h * 0.5 + vertical_bias
+	card.offset_bottom = scaled_h * 0.5 + vertical_bias
+	info_popup_card = card
+	info_popup_root.add_child(card)
+
+	# Background image (info_bg).
+	var bg_rect := TextureRect.new()
+	bg_rect.texture = bg_tex
+	bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	bg_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(bg_rect)
+
+	# Masked content — info_1 clipped by info_mask.
+	if mask_tex and content_tex:
+		var shader: Shader = load("res://ClipMask.gdshader")
+		var mat := ShaderMaterial.new()
+		mat.shader = shader
+		mat.set_shader_parameter("mask", mask_tex)
+
+		# Fit width-wise, keep aspect ratio, anchor to top-center.
+		var content_h: float = card_w * content_tex.get_height() / float(content_tex.get_width())
+		var content_rect := TextureRect.new()
+		content_rect.texture = content_tex
+		content_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		content_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+		content_rect.set_anchors_preset(Control.PRESET_TOP_WIDE)
+		content_rect.offset_top = 4
+		content_rect.offset_bottom = 4 + content_h
+		content_rect.offset_left = 4
+		content_rect.offset_right = -4
+		content_rect.material = mat
+		content_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(content_rect)
+
+	# Close button — top-right corner.
+	var close_tex: Texture2D = load(ICON_CLOSE)
+	if close_tex:
+		var close_btn := TextureButton.new()
+		close_btn.texture_normal = close_tex
+		close_btn.ignore_texture_size = true
+		close_btn.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+		close_btn.custom_minimum_size = Vector2(40, 40)
+		close_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		close_btn.offset_left = -50
+		close_btn.offset_top = 10
+		close_btn.offset_right = -10
+		close_btn.offset_bottom = 50
+		close_btn.pressed.connect(_on_info_close)
+		card.add_child(close_btn)
 
 func _on_start_pressed() -> void:
 	# Go to the newest unlocked stage.
