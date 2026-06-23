@@ -1,14 +1,18 @@
-Stage,Stage Name,Slots,Items,Group,Description,Type,Select,To,Where,Slot,Negate,Field,Sequence,Op,Value,Region
-1,Signal Flow,6 (3x2),BD-2; SD-1; DD-8; CE-2; TR-2; TS808; TS10; Klon Centaur; Emperor; Unicorn,g1,Prefer overdrives to be accessible,position,Category 2=Gain,,row_a,,,,,,,
-1,,,,g1,,position,Category 2=Delay,,row_b,,,,,,,
-1,,,,g2,Gain pedals should be together,group_together,Category 2=Gain,,,,,,,,,
-1,,,,g3,"Two Modulations, Chorus last",group_together,Category 2=Modulation,,,,,,,,,
-1,,,,g3,,order,,,,,,Category 1,Tremolo; Chorus,,,
-1,,,,g4,Delay should be the last pedal,position,Category 2=Delay,,last,,,,,,,
-2,Three Up,3,BD-2; SD-1; DD-8; CE-2; TR-2,g1,Signal order: Gain > Delay,order,,,,,,Category 2,Gain; Delay,,,
-2,,,,g2,Delay is the last pedal,position,Category 2=Delay,,last,,,,,,,
-2,,,,g3,I don't like Yellow pedals,count,Color=Yellow,,,,,,,at most,0,all
-3,Pick Four,4,BD-2; SD-1; DD-8; CE-2; TR-2,g1,Two overdrives then the delay last,count,Category 1=Overdrive,,,,,,,eq,2,all
-3,,,,g1,,position,Category 2=Delay,,last,,,,,,,
-3,,,,g2,I don't like green pedals,count,Color=Green,,,,,,,at most,0,all
-3,,,,g3,"I want 1 modulation pedal, don't care which one",count,Category 2=Modulation,,,,,,,eq,1,all
+Stage,Stage Name,Slots,Items,Group,Description,Type,Select,To,Where,Slot,Negate,Field,Sequence,Op,Value,Region,Secret,Board
+1,Signal Flow,6 (3x2),BD-2; SD-1; DD-8; CE-2; TR-2; TS808; TS10; Klon Centaur; Emperor; Unicorn,g1,Prefer overdrives to be accessible,position,Category 2=Gain,,row_a,,,,,,,,,3x2
+,,,,g1,Delay (Category 2) must be on row B (top),position,Category 2=Delay,,row_b,,,,,,,,,
+,,,,g2,Gain pedals should be together,group_together,Category 2=Gain,,,,,,,,,,,
+,,,,g3,"Two Modulations, Chorus last",group_together,Category 2=Modulation,,,,,,,,,,,
+,,,,g3,"Category 1 order: Tremolo, Chorus",order,,,,,,Category 1,Tremolo; Chorus,,,,,
+,,,,g4,Delay should be the last pedal,position,Category 2=Delay,,last,,,,,,,,,
+2,Three Up,3 (3x1),BD-2; SD-1; DD-8; CE-2; TR-2,g1,Signal order: Gain > Delay,order,,,,,,Category 2,Gain; Delay,,,,,3x1
+,,,,g2,Delay is the last pedal,position,Category 2=Delay,,last,,,,,,,,,
+,,,,g3,I don't like Yellow pedals,count,Color=Yellow,,,,,,,at most,0,all,,
+3,Pick Four,4 (4x1),BD-2; SD-1; DD-8; CE-2; TR-2,g1,Two overdrives then the delay last,count,Category 1=Overdrive,,,,,,,eq,2,all,,4x1
+,,,,g1,Delay (Category 2) must be last,position,Category 2=Delay,,last,,,,,,,,,
+,,,,g2,I don't like green pedals,count,Color=Green,,,,,,,at most,0,all,,
+,,,,g3,"I want 1 modulation pedal, don't care which one",count,Category 2=Modulation,,,,,,,eq,1,all,,
+4,Vintage savvy,5 (5x1),DD-8; CE-2; TR-2; Klon Centaur; Unicorn; Emperor; Phase 90,,"Klon, first",position,name:Klon Centaur,,first,,,,,,,,,5x1
+,,,,g1,I want the rest of the board to be Boss pedals,group_together,Brand=Boss,,,,,,,,,,,
+,,,,g1,Exactly 3 Boss (Brand) in the whole board,count,Brand=Boss,,,,,,,==,3,all,,
+,,,,g2,I want at least 2 vintage pedals,count,Era=vintage,,,,,,,==,2,all,,

@@ -70,8 +70,8 @@ const ICON_PASS := "res://assets/ui/icon_pass.png"
 const ICON_FAIL := "res://assets/ui/icon_fail.png"
 const ICON_PENDING := "res://assets/ui/icon_pending.png"
 const AVATAR := "res://assets/ui/avatar.png"
-const INFO_BG := "res://assets/ui/info_bg.png"
-const INFO_MASK := "res://assets/ui/info_mask.png"
+const INFO_BG := "res://assets/ui/info2_bg.png"
+const INFO_MASK := "res://assets/ui/info2_mask.png"
 const INFO_TEST_CONTENT := "res://assets/info/info_1.png"
 
 # Per-stage email content for the inbox card.
@@ -4131,6 +4131,7 @@ func _build_info_popup() -> void:
 	card.offset_bottom = scaled_h * 0.5 + vertical_bias
 	info_popup_card = card
 	info_popup_root.add_child(card)
+	_add_card_shadow(card, 14, 16, 18)
 
 	# Background image (info_bg).
 	var bg_rect := TextureRect.new()

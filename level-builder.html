@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pedalboard Puzzle — Level Builder</title>
+<style>
+/* ============================================================
+   RESET & BASE — colour scheme matches the game (Game2D.gd)
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #23232e; --panel: #f6efdd; --card: #fcf8ee;
+  --accent: #8b7fc7; --accent2: #c9b9f2; --text: #3a3a52;
+  --text-dim: #8a8aa0; --green: #86c98a; --red: #c8554f;
+  --yellow: #f0ddae; --blue: #5b9bd5; --gold: #e8c46a;
+  --slot-empty: rgba(0,0,0,0.06); --slot-hover: rgba(139,127,199,0.20);
+  --border: #d9d0bd; --input-bg: #f5eed8; --radius: 8px;
+  font-family: 'Segoe UI', system-ui, sans-serif; font-size: 21px;
+  color: var(--text); background: var(--bg);
+}
+body { min-height: 100vh; display: flex; flex-direction: column; }
+
+/* Header — dark toolbar matching game's dark bg */
+.header {
+  background: #363750; padding: 8px 16px; display: flex;
+  align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); flex-wrap: wrap;
+  color: #eee;
+}
+.header h1 { font-size: 1.15em; white-space: nowrap; margin-right: 4px; color: #eee; }
+.header label { font-size: 0.78em; color: #aaa; display: flex; align-items: center; gap: 3px; }
+.header input, .header select {
+  background: rgba(255,255,255,0.10); color: #eee; border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px; padding: 3px 7px; font-size: 0.82em;
+}
+.header input { width: 165px; }
+.stage-name-inp { width: 255px !important; }
+.stage-id-inp { width: 75px !important; }
+.btn-sm {
+  padding: 4px 10px; border: none; border-radius: 4px; cursor: pointer;
+  font-size: 0.78em; font-weight: 600;
+}
+.btn-load { background: var(--blue); color: #fff; }
+.btn-save { background: var(--accent); color: #fff; }
+.btn-sm:hover { filter: brightness(1.15); }
+
+/* Main layout */
+.main { display: flex; flex: 1; overflow: hidden; }
+.panel { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+.panel-right { border-right: none; border-left: 1px solid var(--border); }
+.panel-header {
+  padding: 7px 10px; font-weight: 600; font-size: 0.82em;
+  text-transform: uppercase; letter-spacing: 0.3px;
+  background: var(--accent2); color: var(--text);
+  border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.panel-body { flex: 1; overflow-y: auto; padding: 6px; }
+
+/* Left: Pedals */
+#pedal-panel { width: 405px; min-width: 345px; }
+.pedal-card {
+  background: var(--card); border-radius: var(--radius); padding: 5px 7px;
+  margin-bottom: 4px; cursor: grab; transition: all 0.12s;
+  display: flex; align-items: center; gap: 7px;
+  border: 2px solid transparent; user-select: none;
+}
+.pedal-card:hover { background: #f0ead5; border-color: var(--accent2); }
+.pedal-card.selected { border-color: var(--accent); background: #e8dcc8; }
+.pedal-card.dragging { opacity: 0.4; }
+.pedal-card img { width: 54px; height: 54px; object-fit: contain; flex-shrink: 0; pointer-events: none; }
+.pedal-card .info { flex: 1; min-width: 0; pointer-events: none; }
+.pedal-card .name { font-weight: 600; font-size: 0.82em; }
+.pedal-card .meta { font-size: 0.68em; color: var(--text-dim); }
+.pedal-card .size-tag {
+  font-size: 0.62em; background: var(--accent2); color: #fff;
+  padding: 1px 4px; border-radius: 3px; flex-shrink: 0;
+}
+#pedal-search {
+  width: 100%; padding: 5px 8px; margin-bottom: 5px;
+  background: var(--input-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; font-size: 0.82em;
+}
+.pedal-quick-actions { display: flex; gap: 3px; margin-bottom: 5px; flex-wrap: wrap; }
+.pedal-quick-actions button {
+  padding: 2px 6px; font-size: 0.68em; background: var(--card);
+  color: var(--text); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+}
+.pedal-quick-actions button:hover { background: var(--accent2); }
+
+/* Center: Board */
+#board-panel { flex: 1; display: flex; flex-direction: column; background: var(--bg); }
+#board-container {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: auto; padding: 45px;
+}
+#board-area { position: relative; }
+.board-bg-img { position: absolute; pointer-events: none; z-index: 0; image-rendering: auto; opacity: 0.85; }
+.signal-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  color: rgba(255,255,255,0.40); pointer-events: none; font-weight: 600; font-size: 0.8em;
+}
+.signal-arrow.left { left: -78px; } .signal-arrow.right { right: -78px; color: var(--yellow); }
+.slot-grid { display: grid; gap: 5px; position: relative; z-index: 1; }
+.slot {
+  background: var(--slot-empty); border: 2px dashed rgba(255,255,255,0.18);
+  border-radius: var(--radius); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.12s; position: relative; flex-direction: column; overflow: hidden;
+}
+.slot:hover { background: var(--slot-hover); border-color: var(--accent2); }
+.slot.occupied { border-style: solid; border-color: rgba(255,255,255,0.30); background: transparent; }
+.slot.highlight { border-color: var(--yellow); box-shadow: 0 0 12px rgba(240,221,174,0.5); }
+.slot.selected-for-rules { border-color: var(--gold) !important; box-shadow: 0 0 16px rgba(232,196,106,0.6) !important; border-style: solid !important; }
+.slot.drag-over { border-color: var(--accent) !important; background: rgba(139,127,199,0.20) !important; }
+.slot-num {
+  position: absolute; top: 2px; left: 4px; font-size: 0.58em;
+  color: rgba(255,255,255,0.45); font-weight: 700; z-index: 2; text-shadow: 0 0 3px rgba(0,0,0,0.8);
+}
+.slot img { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; padding: 4px; pointer-events: none; }
+.slot .pedal-name-label {
+  position: absolute; bottom: 1px; left: 0; right: 0; text-align: center;
+  font-size: 0.52em; font-weight: 600; color: #fff;
+  text-shadow: 0 0 3px #000; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px;
+}
+.slot .remove-btn {
+  position: absolute; top: 1px; right: 2px; width: 21px; height: 21px;
+  border-radius: 50%; background: var(--red); color: #fff; border: none;
+  font-size: 13px; line-height: 21px; text-align: center;
+  cursor: pointer; display: none; z-index: 3;
+}
+.slot.occupied:hover .remove-btn { display: block; }
+
+/* Right: Rules */
+#rules-panel { width: 630px; min-width: 570px; }
+
+.rule-pedal-group {
+  font-size: 0.68em; font-weight: 700; color: var(--accent);
+  padding: 5px 3px 2px; border-top: 1px solid var(--border);
+  margin-top: 3px; text-transform: uppercase; letter-spacing: 0.3px;
+  display: flex; align-items: center; gap: 5px;
+}
+.rule-pedal-group:first-child { border-top: none; margin-top: 0; }
+.rule-pedal-group img { width: 33px; height: 33px; object-fit: contain; }
+
+.rule-group-block {
+  background: rgba(139,127,199,0.10); border: 1px solid rgba(139,127,199,0.25);
+  border-radius: var(--radius); padding: 4px; margin-bottom: 5px;
+}
+.rule-group-block .group-label {
+  font-size: 0.62em; color: var(--accent2); font-weight: 700;
+  padding: 1px 5px; text-transform: uppercase;
+}
+
+.rule-card {
+  background: var(--card); border-radius: 5px; padding: 5px 7px;
+  margin-bottom: 2px; border: 2px solid transparent;
+  display: flex; align-items: flex-start; gap: 5px; transition: all 0.12s;
+}
+.rule-card.enabled { border-color: var(--green); }
+.rule-card .rule-check { flex-shrink: 0; margin-top: 2px; }
+.rule-card .rule-body { flex: 1; min-width: 0; }
+.rule-card .rule-type {
+  font-size: 0.62em; text-transform: uppercase; color: var(--accent);
+  font-weight: 600; letter-spacing: 0.3px;
+}
+.rule-card .rule-desc { font-size: 0.78em; margin: 1px 0; }
+.rule-card .rule-desc-edit {
+  width: 100%; background: var(--input-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 2px 5px; font-size: 0.78em; margin-top: 2px;
+}
+.rule-card .rule-detail { font-size: 0.63em; color: var(--text-dim); }
+.rule-card .rule-del {
+  flex-shrink: 0; background: none; border: none; color: var(--red);
+  cursor: pointer; font-size: 0.95em; padding: 0 2px; opacity: 0.6;
+}
+.rule-card .rule-del:hover { opacity: 1; }
+
+/* Rule form */
+.rule-form {
+  background: var(--card); border-radius: var(--radius); padding: 8px;
+  margin-bottom: 6px; display: none;
+}
+.rule-form.open { display: block; }
+.rule-form select, .rule-form input {
+  background: var(--input-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 6px; font-size: 0.78em; margin: 2px;
+}
+.rule-form select { min-width: 150px; }
+.rule-form input { width: 105px; }
+.rule-form .form-row { display: flex; gap: 4px; margin: 2px 0; align-items: center; flex-wrap: wrap; }
+.rule-form .form-row label { font-size: 0.72em; color: var(--text-dim); min-width: 40px; }
+.rule-form button { padding: 3px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.78em; font-weight: 600; }
+.btn-add { background: var(--accent); color: #fff; }
+.btn-cancel { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); }
+
+/* Bottom bar & results */
+#results-section {
+  background: var(--panel); border-top: 1px solid var(--border);
+  max-height: 480px; overflow-y: auto; display: none;
+}
+#results-section.open { display: block; }
+#action-bar {
+  background: #363750; border-top: 1px solid rgba(255,255,255,0.08);
+  padding: 7px 16px; display: flex; gap: 7px; align-items: center; flex-wrap: wrap;
+  color: #eee;
+}
+.btn {
+  padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
+  font-size: 0.82em; font-weight: 600; transition: all 0.12s;
+}
+.btn-test { background: var(--green); color: #1a3a1a; }
+.btn-suggest { background: var(--accent); color: #fff; }
+.btn-clear { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:hover:not(:disabled) { filter: brightness(1.15); }
+
+.results-header {
+  padding: 7px 16px; font-weight: 600; display: flex;
+  justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);
+}
+.results-grid { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+.mini-board {
+  display: grid; gap: 1px; background: rgba(0,0,0,0.08);
+  padding: 2px; border-radius: 3px; border: 1px solid var(--border);
+}
+.mini-board img { width: 24px; height: 24px; object-fit: contain; }
+.mini-board .mini-slot {
+  width: 30px; height: 30px; border-radius: 2px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--slot-empty); overflow: hidden;
+}
+
+/* Toast & modal */
+.toast {
+  position: fixed; bottom: 27px; right: 27px; z-index: 999;
+  background: var(--green); color: #1a3a1a; padding: 13px 27px;
+  border-radius: 6px; font-weight: 600; opacity: 0;
+  transition: opacity 0.3s; pointer-events: none;
+}
+.toast.show { opacity: 1; } .toast.error { background: var(--red); color: #fff; }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+  z-index: 100; display: flex; align-items: center; justify-content: center;
+}
+.modal-box {
+  background: var(--panel); border-radius: 12px; padding: 18px;
+  max-width: 92vw; max-height: 82vh; overflow: auto; border: 1px solid var(--border);
+}
+.modal-box h3 { margin-bottom: 8px; }
+.modal-box textarea {
+  width: 1110px; max-width: 84vw; height: 450px;
+  background: var(--input-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 10px; font-family: 'Consolas', monospace; font-size: 0.73em;
+}
+.modal-box .btn-row { margin-top: 8px; display: flex; gap: 7px; }
+
+/* Scrollbar, stats, misc */
+::-webkit-scrollbar { width: 7px; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.stat-badge { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 0.78em; font-weight: 600; }
+.stat-badge.good { background: var(--green); color: #1a3a1a; }
+.stat-badge.warn { background: var(--yellow); color: #3a3a20; }
+.stat-badge.bad { background: var(--red); color: #fff; }
+.perm-warning { background: var(--yellow); color: #3a3a20; padding: 5px 10px; border-radius: 5px; font-weight: 600; text-align: center; margin: 5px 0; font-size: 0.82em; }
+.empty-state { text-align: center; padding: 24px; color: var(--text-dim); font-size: 0.85em; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <h1>🎛️ Level Builder</h1>
+  <button class="btn-sm btn-load" onclick="loadCSVviaPicker()">📂 Load CSV</button>
+  <input type="file" id="csv-file-input" accept=".csv" style="display:none" onchange="loadCSVFile(event)">
+  <button class="btn-sm btn-save" onclick="saveCSV()">💾 Save CSV</button>
+  <span style="font-size:0.68em;color:#aaa" id="csv-status">No file loaded</span> |
+  <label>Stage <select id="stage-selector" onchange="onStageSelect()"><option value="-1">+ New</option></select></label>
+  <label>Name <input type="text" id="stage-name" class="stage-name-inp" value="New Stage"></label>
+  <label>ID <input type="number" id="stage-id" class="stage-id-inp" value="4" min="1"></label>
+  <label>Board <select id="board-type" onchange="onBoardTypeChange()">
+    <option value="3x1">3×1</option><option value="3x2" selected>3×2</option>
+    <option value="4x1">4×1</option><option value="5x1">5×1</option>
+  </select></label>
+  <span style="font-size:0.72em;color:#aaa">Slots: <strong id="slot-count-display">6</strong></span>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- LEFT: Pedal panel -->
+  <div class="panel" id="pedal-panel">
+    <div class="panel-header"><span>🎸 Pedals</span><span style="font-size:0.68em;color:var(--text)" id="pedal-count">0/0</span></div>
+    <div class="panel-body">
+      <input type="text" id="pedal-search" placeholder="🔍 Filter...">
+      <div class="pedal-quick-actions">
+        <button onclick="selectAllPedals()">All</button>
+        <button onclick="selectNonePedals()">None</button>
+        <button onclick="selectByCategory('Gain')">Gain</button>
+        <button onclick="selectByCategory('Modulation')">Mod</button>
+        <button onclick="selectByCategory('Delay')">Delay</button>
+        <button onclick="selectByCategory('Dynamic')">Dyn</button>
+      </div>
+      <div id="pedal-list"></div>
+    </div>
+  </div>
+
+  <!-- CENTER: Board -->
+  <div id="board-panel">
+    <div class="panel-header" style="border-bottom:1px solid var(--border)">
+      <span>📋 Board — <span style="font-size:0.75em;color:var(--gold);font-weight:400">Click placed pedal to select for rules</span></span>
+      <span style="font-size:0.68em;color:var(--text)">Drag pedals here &nbsp;|&nbsp; IN ➤ right</span>
+    </div>
+    <div id="board-container">
+      <div id="board-area">
+        <img class="board-bg-img" id="board-bg-img" src="" alt="">
+        <span class="signal-arrow right">IN ➤</span><span class="signal-arrow left">OUT</span>
+        <div class="slot-grid" id="slot-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Rules -->
+  <div class="panel panel-right" id="rules-panel">
+    <div class="panel-header"><span>📐 Rules</span><span style="font-size:0.68em;color:var(--text)" id="rule-count">0 rules</span></div>
+    <div class="panel-body">
+      <div style="display:flex;gap:5px;margin-bottom:5px">
+        <button class="btn btn-suggest" onclick="suggestRulesForSelected()" style="flex:1;font-size:0.74em" id="btn-suggest-sel">🎯 Suggest for Selected</button>
+        <button class="btn btn-suggest" onclick="suggestGeneralRules()" style="flex:1;font-size:0.74em">📊 General Rules</button>
+      </div>
+      <div style="display:flex;gap:5px;margin-bottom:5px">
+        <select id="rule-type-select" style="flex:1;font-size:0.76em;padding:3px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+          <option value="">+ Add Rule (choose type)...</option>
+          <option value="position">Position</option><option value="adjacent">Adjacent</option>
+          <option value="group_together">Group Together</option>
+          <option value="order">Order</option><option value="count">Count</option>
+          <option value="no_adjacent_same">No Adjacent Same</option>
+        </select>
+      </div>
+      <div class="rule-form" id="rule-form"></div>
+      <div style="margin-bottom:5px">
+        <label style="font-size:0.73em;display:flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="secret-rule-check"> Mark next added rule as Secret
+        </label>
+      </div>
+      <div id="rule-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ACTION BAR -->
+<div id="action-bar">
+  <button class="btn btn-test" id="btn-test" onclick="runTest()">🧪 Test All Combinations</button>
+  <button class="btn btn-clear" onclick="clearBoard()">🧹 Clear Board</button>
+  <span style="font-size:0.73em;color:#aaa" id="perm-estimate"></span>
+</div>
+
+<!-- RESULTS -->
+<div id="results-section">
+  <div class="results-header">
+    <span id="results-title">Results</span>
+    <button class="btn btn-clear" onclick="closeResults()" style="font-size:0.73em">✕</button>
+  </div>
+  <div class="results-grid" id="results-grid"></div>
+</div>
+
+<!-- CSV MODAL -->
+<div class="modal-overlay" id="csv-modal" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+  <div class="modal-box">
+    <h3 id="csv-modal-title">CSV Preview</h3>
+    <div id="csv-modal-content"></div>
+    <div class="btn-row">
+      <button class="btn btn-suggest" id="csv-modal-save-as" onclick="doSaveAsNewCSV()">💾 Download new file</button>
+      <button class="btn btn-save" id="csv-modal-save-over" onclick="doSaveToFileCSV()">📝 Save to ${csvFileName}</button>
+      <button class="btn btn-clear" onclick="document.getElementById('csv-modal').style.display='none'">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- SCRIPTS -->
+<script>
+// =========================================================================
+// ASSET PATHS
+// =========================================================================
+const BOARD_ASSETS = {
+  '3x1':'assets/boards/pedalboard.png','3x2':'assets/boards/pedalboard_3x2.png',
+  '4x1':'assets/boards/pedalboard_4.png','5x1':'assets/boards/pedalboard_5.png',
+};
+const PEDAL_ASSETS = {
+  'DD-8':'assets/pedals/dd_8.png','SD-1':'assets/pedals/sd_1.png','BD-2':'assets/pedals/bd_2.png',
+  'CE-2':'assets/pedals/ce_2.png','TR-2':'assets/pedals/tr_2.png','Klon Centaur':'assets/pedals/klon.png',
+  'Morning Glory':'assets/pedals/morning_glory.png','Emperor':'assets/pedals/penguin.png',
+  'Unicorn':'assets/pedals/unicorn.png','Phase 90':'assets/pedals/phase90.png',
+  'Dyna Comp':'assets/pedals/dyna_comp.png','Distortion Plus':'assets/pedals/dist_plus.png',
+  'TS808':'assets/pedals/ts808.png','TS9':'assets/pedals/ts9.png','TS10':'assets/pedals/ts10.png',
+  'Wahwah':'assets/pedals/wahwah.png',
+};
+function pedalImg(n){return PEDAL_ASSETS[n]||'';}
+function boardImg(t){return BOARD_ASSETS[t]||BOARD_ASSETS['3x1'];}
+
+// =========================================================================
+// PEDAL DB — hardcoded
+// =========================================================================
+const PEDAL_CSV = `Pedal Name,Asset,Brand,Color,Category 1,Category 2,Size,Bypass,Era,Power,Extra,budget
+DD-8,dd_8,Boss,White,Digital Delay,Delay,1x1,buffered,modern,mid,,2
+SD-1,sd_1,Boss,Yellow,Overdrive,Gain,1x1,buffered,modern,low,,1
+BD-2,bd_2,Boss,Blue,Overdrive,Gain,1x1,buffered,modern,low,,1
+CE-2,ce_2,Boss,Blue,Chorus,Modulation,1x1,true bypass,vintage,mid,modded,3
+TR-2,tr_2,Boss,Green,Tremolo,Modulation,1x1,buffered,vintage,mid,,2
+Klon Centaur,klon,Klon,Golden,Overdrive,Gain,2x1,buffered,vintage,low,,10
+Morning Glory,morning_glory,JHS,Golden,Overdrive,Gain,1x1,true bypass,modern,low,,3
+Emperor,penguin,JHS,Purple,"Chorus, Vibrato",Modulation,1x1,true bypass,modern,mid,,3
+Unicorn,unicorn,JHS,Blue,"Univibe, Vibrato",Modulation,1x1,true bypass,modern,mid,,3
+Phase 90,phase90,MXR,Orange,Phaser,Modulation,1x1,True bypass,modern,low,,2
+Dyna Comp,dyna_comp,MXR,Red,Compressor,Gain,1x1,True bypass,modern,low,,2
+Distortion Plus,dist_plus,MXR,Orange,Distortion,Gain,1x1,True bypass,modern,low,,2
+TS808,ts808,Ibanez,Green,Overdrive,Gain,1x1,buffered,modern,low,,3
+TS9,ts9,Ibanez,Green,Overdrive,Gain,1x1,buffered,modern,low,,3
+TS10,ts10,Ibanez,Green,Overdrive,Gain,1x1,buffered,vintage,low,,5
+Wahwah,wahwah,Jim Dunlop,Black,Wah wah,Dynamic,1x2,buffered,modern,mid,,3`;
+
+let pedals=[];
+let selectedPedals=new Set();
+let boardType='3x2',boardCols=3,boardRows=2;
+let boardState={};       // slotIndex -> pedalName
+let activeSlot=null;
+let selectedForRules=new Set(); // pedal names selected for rule suggestions
+let rules=[];
+let ruleIdCounter=1;
+let allStages=[],currentStageIndex=-1,csvLoaded=false,csvFileName='stages.csv',_fileHandle=null;
+
+// =========================================================================
+// CSV PARSE
+// =========================================================================
+function parseCSVLine(l){
+  let r=[],c='',q=false;
+  for(let ch of l){if(ch==='"')q=!q;else if(ch===','&&!q){r.push(c);c='';}else c+=ch;}
+  r.push(c);return r;
+}
+function parsePedalCSV(csv){
+  let ls=csv.trim().split('\n'),hd=ls[0].split(','),res=[];
+  for(let i=1;i<ls.length;i++){
+    let v=parseCSVLine(ls[i]),o={};
+    hd.forEach((h,j)=>{o[h.trim()]=(v[j]||'').trim();});
+    o._sizeW=parseInt(o.Size?.split('x')[0])||1;o._sizeH=parseInt(o.Size?.split('x')[1])||1;
+    o._slotUnits=o._sizeW*o._sizeH;res.push(o);
+  }
+  return res;
+}
+function getPedal(n){return pedals.find(p=>p['Pedal Name']===n);}
+
+// =========================================================================
+// STAGES CSV
+// =========================================================================
+function parseStagesCSV(txt){
+  let ls=txt.trim().split('\n').filter(l=>l.trim());if(ls.length<2)return[];
+  let hd=parseCSVLine(ls[0]),hm={};hd.forEach((h,i)=>{hm[h.trim()]=i;});
+  let sm=new Map(),lastSid='';
+  for(let i=1;i<ls.length;i++){
+    let v=parseCSVLine(ls[i]),sid=(v[hm['Stage']??0]||'').trim();
+    if(!sid){sid=lastSid;}else{lastSid=sid;}
+    if(!sid)continue;
+    if(!sm.has(sid))sm.set(sid,[]);sm.get(sid).push(v);
+  }
+  let stages=[];
+  for(let [sid,rows] of sm){
+    let f=rows[0];
+    let name=(f[hm['Stage Name']??1]||'').trim();
+    let sRaw=(f[hm['Slots']??2]||'').trim();
+    let iRaw=(f[hm['Items']??3]||'').trim();
+    let bRaw=(f[hm['Board']??18]||'').trim();
+    let cols=3,rowsC=1;
+    if(bRaw&&bRaw.includes('x')){let p=bRaw.split('x');cols=parseInt(p[0])||3;rowsC=parseInt(p[1])||1;}
+    else if(sRaw.includes('(')){let m=sRaw.match(/\((\d+)x(\d+)\)/);if(m){cols=parseInt(m[1]);rowsC=parseInt(m[2]);}}
+    else{let n=parseInt(sRaw)||rows.length;cols=n;rowsC=1;}
+    let bt=`${cols}x${rowsC}`;
+    let items=iRaw?iRaw.split(';').map(s=>s.trim()).filter(Boolean):[];
+    let sr=[];
+    for(let r of rows){
+      let typ=(r[hm['Type']??6]||'').trim();if(!typ)continue;
+      let selR=(r[hm['Select']??7]||'').trim(),toR=(r[hm['To']??8]||'').trim();
+      let wh=(r[hm['Where']??9]||'').trim(),slR=(r[hm['Slot']??10]||'').trim();
+      let negR=(r[hm['Negate']??11]||'').trim(),fdR=(r[hm['Field']??12]||'').trim();
+      let sqR=(r[hm['Sequence']??13]||'').trim(),opR=(r[hm['Op']??14]||'').trim();
+      let vlR=(r[hm['Value']??15]||'').trim(),rgR=(r[hm['Region']??16]||'').trim();
+      let scR=(r[hm['Secret']??17]||'').trim();
+      let rule={_id:ruleIdCounter++,_enabled:true,type:typ.toLowerCase().replace(/ /g,'_'),
+        group:(r[hm['Group']??4]||'').trim(),description:(r[hm['Description']??5]||'').trim(),
+        secret:scR.toUpperCase()==='TRUE',_source:'csv',_sugPedal:null};
+      if(selR)rule.select=parseSelector(selR);
+      if(toR)rule.to=parseSelector(toR);
+      if(wh)rule.where=wh;
+      if(slR)rule.slot=parseInt(slR)-1;
+      if(negR.toUpperCase()==='TRUE')rule.negate=true;
+      if(fdR){if(rule.type==='order')rule.by=fdR;else if(rule.type==='no_adjacent_same')rule.field=fdR;}
+      if(sqR)rule.sequence=sqR.split(';').map(s=>s.trim()).filter(Boolean);
+      if(opR)rule.op=opR;if(vlR)rule.value=parseInt(vlR);if(rgR)rule.region=rgR;
+      // Derive _sugPedal from name-based selectors
+      if(rule.select&&rule.select.name)rule._sugPedal=rule.select.name;
+      sr.push(rule);
+    }
+    stages.push({id:sid,name,items,boardType:bt,cols,rows:rowsC,rules:sr});
+  }
+  return stages;
+}
+function parseSelector(raw){
+  if(!raw)return{};if(raw==='all')return{all:true};
+  if(raw.startsWith('name:'))return{name:raw.substring(5)};
+  if(raw.startsWith('tag:'))return{tag:raw.substring(4)};
+  if(raw.startsWith('same:'))return{field:raw.substring(5),same_as_subject:true};
+  let eq=raw.indexOf('=');if(eq>=0)return{field:raw.substring(0,eq),value:raw.substring(eq+1)};
+  return{name:raw};
+}
+
+function buildFullCSV(){
+  let hd='Stage,Stage Name,Slots,Items,Group,Description,Type,Select,To,Where,Slot,Negate,Field,Sequence,Op,Value,Region,Secret,Board';
+  let ls=[hd];
+  for(let st of allStages){
+    let ts=st.cols*st.rows,ss=`${ts} (${st.boardType})`,is=st.items.join('; '),bs=st.boardType;
+    let srs=[...st.rules].filter(r=>r._enabled).sort((a,b)=>{let ga=a.group||'',gb=b.group||'';return ga!==gb?ga.localeCompare(gb):a._id-b._id;});
+    if(srs.length===0){ls.push(`${st.id},${csvEscape(st.name)},${ss},${is},,,,,,,,,,,,,,,${bs}`);}
+    else{let fr=true;for(let r of srs){ls.push([fr?st.id:'',fr?csvEscape(st.name):'',fr?ss:'',fr?is:'',r.group||'',csvEscape(r.description||describeRule(r)),r.type,csvEscape(sel2csv(r.select)),csvEscape(sel2csv(r.to||{})),r.where||'',r.slot!==undefined?String(r.slot+1):'',r.negate?'TRUE':'',r.field||r.by||'',r.sequence?r.sequence.join('; '):'',r.op||'',r.value!==undefined?String(r.value):'',r.region||'',r.secret?'TRUE':'',fr?bs:''].join(','));fr=false;}}
+  }
+  return ls.join('\n');
+}
+function sel2csv(s){if(!s||Object.keys(s).length===0)return'';if(s.all)return'all';if(s.name!==undefined)return`name:${s.name}`;if(s.tag!==undefined)return`tag:${s.tag}`;if(s.field!==undefined){if(s.same_as_subject)return`same:${s.field}`;return`${s.field}=${s.value||''}`;}return'';}
+function csvEscape(s){if(!s)return'';if(s.includes(',')||s.includes('"')||s.includes('\n'))return'"'+s.replace(/"/g,'""')+'"';return s;}
+
+// =========================================================================
+// CSV LOAD/SAVE
+// =========================================================================
+function loadCSVFile(e){
+  let f=e.target.files[0];if(!f)return;
+  csvFileName=f.name;_fileHandle=null; // no writable handle from <input>
+  let r=new FileReader();
+  r.onload=function(ev){try{allStages=parseStagesCSV(ev.target.result);csvLoaded=true;document.getElementById('csv-status').textContent=`Loaded: ${f.name} (${allStages.length} stages)`;document.getElementById('csv-status').className='stat-badge good';rebuildStageSelector();showToast(`Loaded ${allStages.length} stages`);}catch(err){showToast('Parse error: '+err.message,'error');}};
+  r.readAsText(f);
+}
+
+// Try loading via File System Access API for writable handle
+async function loadCSVviaPicker(){
+  if(typeof window.showOpenFilePicker!=='function'){
+    document.getElementById('csv-file-input').click();
+    return;
+  }
+  try{
+    let[handle]=await window.showOpenFilePicker({types:[{description:'CSV',accept:{'text/csv':['.csv']}}]});
+    _fileHandle=handle;
+    csvFileName=handle.name;
+    let f=await handle.getFile();
+    let txt=await f.text();
+    allStages=parseStagesCSV(txt);
+    csvLoaded=true;
+    document.getElementById('csv-status').textContent=`Loaded: ${csvFileName} (${allStages.length} stages) ✏️`;
+    document.getElementById('csv-status').className='stat-badge good';
+    rebuildStageSelector();
+    showToast(`Loaded ${allStages.length} stages — can save directly to ${csvFileName}`);
+  }catch(err){
+    // User cancelled, fall back to <input>
+    if(err.name!=='AbortError')document.getElementById('csv-file-input').click();
+  }
+}
+function rebuildStageSelector(){
+  let s=document.getElementById('stage-selector');
+  s.innerHTML='<option value="-1">+ New Stage</option>';
+  allStages.forEach((st,i)=>{s.innerHTML+=`<option value="${i}">Stage ${st.id}: ${st.name}</option>`;});
+  if(allStages.length>0&&currentStageIndex<0){s.value='0';onStageSelect();}
+}
+function onStageSelect(){
+  let idx=parseInt(document.getElementById('stage-selector').value);
+  if(idx<0){currentStageIndex=-1;return;}
+  currentStageIndex=idx;loadStageIntoBuilder(allStages[idx]);
+}
+function loadStageIntoBuilder(st){
+  document.getElementById('stage-id').value=st.id;document.getElementById('stage-name').value=st.name;
+  boardType=st.boardType;document.getElementById('board-type').value=boardType;
+  boardCols=st.cols;boardRows=st.rows;selectedPedals=new Set(st.items);
+  boardState={};activeSlot=null;selectedForRules=new Set();
+  rules=st.rules.map(r=>({...r}));
+  ruleIdCounter=Math.max(ruleIdCounter,...rules.map(r=>r._id),0)+1;
+  renderAll();updatePermEstimate();
+}
+function saveCurrentStageToAllStages(){
+  let sid=document.getElementById('stage-id').value,sname=document.getElementById('stage-name').value;
+  let items=[...selectedPedals],bt=`${boardCols}x${boardRows}`;
+  let st={id:sid,name:sname,items,boardType:bt,cols:boardCols,rows:boardRows,rules:rules.map(r=>({...r}))};
+  if(currentStageIndex>=0&&currentStageIndex<allStages.length)allStages[currentStageIndex]=st;
+  else{allStages.push(st);currentStageIndex=allStages.length-1;rebuildStageSelector();document.getElementById('stage-selector').value=String(currentStageIndex);}
+}
+function saveCSV(){
+  saveCurrentStageToAllStages();let csv=buildFullCSV();
+  let hasHandle=!!_fileHandle;
+  document.getElementById('csv-modal-title').textContent='Save CSV';
+  document.getElementById('csv-modal-content').innerHTML=`<p style="margin-bottom:8px">Saving <strong>${allStages.length}</strong> stages.</p><textarea readonly id="csv-preview-textarea">${csv.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>`;
+  document.getElementById('csv-modal-save-as').textContent='💾 Download new file';
+  document.getElementById('csv-modal-save-over').textContent=hasHandle?`📝 Overwrite ${csvFileName} (silent)`:csvLoaded?`📝 Pick ${csvFileName} to overwrite`:'📝 Save to file…';
+  document.getElementById('csv-modal-save-over').style.display=(hasHandle||csvLoaded)?'':'none';
+  document.getElementById('csv-modal').style.display='flex';
+}
+function doSaveAsNewCSV(){
+  saveCurrentStageToAllStages();let csv=buildFullCSV();
+  let b=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(b),a=document.createElement('a');
+  a.href=url;a.download=csvFileName;a.click();URL.revokeObjectURL(url);
+  document.getElementById('csv-modal').style.display='none';
+  document.getElementById('csv-status').textContent=`Downloaded: ${csvFileName} (${allStages.length} stages)`;
+  document.getElementById('csv-status').className='stat-badge good';rebuildStageSelector();
+  showToast(`CSV downloaded with ${allStages.length} stages!`);
+}
+async function doSaveToFileCSV(){
+  saveCurrentStageToAllStages();let csv=buildFullCSV(),blob=new Blob([csv],{type:'text/csv'});
+  // If we have a writable handle from showOpenFilePicker, write silently
+  if(_fileHandle&&typeof _fileHandle.createWritable==='function'){
+    try{
+      let w=await _fileHandle.createWritable();
+      await w.write(blob);
+      await w.close();
+      document.getElementById('csv-modal').style.display='none';
+      document.getElementById('csv-status').textContent=`Saved: ${csvFileName} (${allStages.length} stages) ✏️`;
+      document.getElementById('csv-status').className='stat-badge good';rebuildStageSelector();
+      showToast(`Overwritten ${csvFileName} with ${allStages.length} stages!`);
+      return;
+    }catch(e){showToast('Write failed, trying picker…','error');}
+  }
+  // Fallback: showSaveFilePicker (or download)
+  if(typeof window.showSaveFilePicker==='function'){
+    try{
+      let handle=await window.showSaveFilePicker({suggestedName:csvFileName,types:[{description:'CSV',accept:{'text/csv':['.csv']}}]});
+      _fileHandle=handle;csvFileName=handle.name;
+      let w=await handle.createWritable();await w.write(blob);await w.close();
+      document.getElementById('csv-modal').style.display='none';
+      document.getElementById('csv-status').textContent=`Saved: ${handle.name} (${allStages.length} stages) ✏️`;
+      document.getElementById('csv-status').className='stat-badge good';rebuildStageSelector();
+      showToast(`Written to ${handle.name}!`);
+      return;
+    }catch(e){if(e.name==='AbortError')return;}
+  }
+  showToast('File System Access not available — downloading instead','error');
+  doSaveAsNewCSV();
+}
+
+// =========================================================================
+// INIT
+// =========================================================================
+function init(){
+  pedals=parsePedalCSV(PEDAL_CSV);
+  selectedPedals=new Set(['BD-2','SD-1','DD-8','CE-2','TR-2','TS808','TS10','Klon Centaur','Emperor','Unicorn']);
+  boardType=document.getElementById('board-type').value;
+  let p=boardType.split('x');boardCols=parseInt(p[0]);boardRows=parseInt(p[1]);
+  boardState={};activeSlot=null;selectedForRules=new Set();rules=[];ruleIdCounter=1;
+  renderAll();updatePermEstimate();
+}
+
+// =========================================================================
+// RENDER
+// =========================================================================
+function renderAll(){renderPedalList();renderBoard();renderRules();updateCounts();}
+function updateCounts(){
+  document.getElementById('slot-count-display').textContent=boardCols*boardRows;
+  document.getElementById('pedal-count').textContent=`${selectedPedals.size}/${pedals.length}`;
+  let en=rules.filter(r=>r._enabled).length;
+  document.getElementById('rule-count').textContent=`${rules.length} rules (${en} enabled)`;
+}
+function onBoardTypeChange(){
+  boardType=document.getElementById('board-type').value;
+  let p=boardType.split('x');boardCols=parseInt(p[0]);boardRows=parseInt(p[1]);
+  boardState={};activeSlot=null;selectedForRules=new Set();renderAll();updatePermEstimate();
+}
+
+// =========================================================================
+// PEDAL LIST (with drag support)
+// =========================================================================
+function renderPedalList(){
+  let c=document.getElementById('pedal-list'),s=document.getElementById('pedal-search').value.toLowerCase();
+  let filt=pedals.filter(p=>{if(!s)return true;let n=(p['Pedal Name']||'').toLowerCase(),b=(p.Brand||'').toLowerCase(),c1=(p['Category 1']||'').toLowerCase(),c2=(p['Category 2']||'').toLowerCase();return n.includes(s)||b.includes(s)||c1.includes(s)||c2.includes(s);});
+  c.innerHTML=filt.map(p=>{
+    let nm=p['Pedal Name'],sel=selectedPedals.has(nm),sz=p.Size!=='1x1'?p.Size:'',ip=pedalImg(nm);
+    return `<div class="pedal-card ${sel?'selected':''}" draggable="true"
+      ondragstart="onDragStart(event,'${esc(nm)}')" ondragend="onDragEnd(event)"
+      onclick="togglePedal('${esc(nm)}')" title="${nm} — ${p.Brand} ${p['Category 2']} (drag to board)">
+      ${ip?`<img src="${ip}" alt="">`:''}
+      <div class="info"><div class="name">${nm}</div><div class="meta">${p.Brand} · ${p['Category 2']}</div></div>
+      ${sz?`<span class="size-tag">${sz}</span>`:''}
+    </div>`;
+  }).join('');
+}
+function selectAllPedals(){selectedPedals=new Set(pedals.map(p=>p['Pedal Name']));renderAll();updatePermEstimate();}
+function selectNonePedals(){selectedPedals=new Set();boardState={};selectedForRules=new Set();renderAll();updatePermEstimate();}
+function selectByCategory(cat){pedals.forEach(p=>{if((p['Category 2']||'')===cat)selectedPedals.add(p['Pedal Name']);});renderAll();updatePermEstimate();}
+function esc(s){return s.replace(/'/g,"\\'").replace(/"/g,'&quot;');}
+
+function togglePedal(name){
+  if(selectedPedals.has(name)){selectedPedals.delete(name);for(let[s,pd]of Object.entries(boardState))if(pd===name)delete boardState[parseInt(s)];selectedForRules.delete(name);}
+  else selectedPedals.add(name);
+  renderAll();updatePermEstimate();
+}
+
+// =========================================================================
+// DRAG AND DROP
+// =========================================================================
+let dragPedalName=null;
+function onDragStart(e,name){dragPedalName=name;e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',name);e.target.classList.add('dragging');}
+function onDragEnd(e){e.target.classList.remove('dragging');dragPedalName=null;}
+
+// =========================================================================
+// BOARD RENDER
+// =========================================================================
+function renderBoard(){
+  let cols=boardCols,rows=boardRows,grid=document.getElementById('slot-grid'),bg=document.getElementById('board-bg-img');
+  bg.src=boardImg(boardType);
+  let slotW=123,slotH=123,gap=7,pad=45;
+  grid.style.gridTemplateColumns=`repeat(${cols},${slotW}px)`;grid.style.gridTemplateRows=`repeat(${rows},${slotH}px)`;grid.style.gap=`${gap}px`;
+  let sgw=cols*slotW+(cols-1)*gap,sgh=rows*slotH+(rows-1)*gap;
+  bg.style.width=`${sgw+pad*2}px`;bg.style.height='auto';bg.style.left=`${-pad}px`;bg.style.top='50%';bg.style.transform='translateY(-50%)';
+  bg.onerror=function(){this.style.display='none';};bg.onload=function(){this.style.display='';};
+
+  let si=[];for(let r=rows-1;r>=0;r--)for(let c=cols-1;c>=0;c--)si.push(r*cols+c);
+
+  grid.innerHTML=si.map(s=>{
+    let occ=boardState[s]||null,isActive=activeSlot===s,isSel=occ&&selectedForRules.has(occ);
+    let cls='slot'+(occ?' occupied':'')+(isActive?' highlight':'')+(isSel?' selected-for-rules':'');
+    let ip=occ?pedalImg(occ):'';
+    return `<div class="${cls}" onclick="onSlotClick(${s})"
+      ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event,${s})"
+      style="width:${slotW}px;height:${slotH}px">
+      <span class="slot-num">${s+1}</span>
+      ${occ?`${ip?`<img src="${ip}" alt="">`:''}<span class="pedal-name-label">${occ}</span><button class="remove-btn" onclick="event.stopPropagation();removeFromSlot(${s})">✕</button>`:`<span style="color:var(--text-dim);font-size:0.55em;z-index:2">${isActive?'pick→':''}</span>`}
+    </div>`;
+  }).join('');
+}
+
+function onDragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';e.currentTarget.classList.add('drag-over');}
+function onDragLeave(e){e.currentTarget.classList.remove('drag-over');}
+function onDrop(e,slotIndex){
+  e.preventDefault();e.currentTarget.classList.remove('drag-over');
+  let name=dragPedalName||e.dataTransfer.getData('text/plain');if(!name)return;
+  if(!selectedPedals.has(name)){selectedPedals.add(name);}
+  placePedalInSlotDirect(name,slotIndex);
+}
+
+function onSlotClick(slotIndex){
+  let occ=boardState[slotIndex];
+  if(occ){
+    // Toggle selection for rules
+    if(selectedForRules.has(occ))selectedForRules.delete(occ);else selectedForRules.add(occ);
+    activeSlot=null;
+  }else{
+    activeSlot=(activeSlot===slotIndex)?null:slotIndex;
+  }
+  renderAll();
+}
+
+function removeFromSlot(slotIndex){
+  let nm=boardState[slotIndex];delete boardState[slotIndex];selectedForRules.delete(nm);
+  if(activeSlot===slotIndex)activeSlot=null;
+  renderAll();
+}
+
+function placePedalInSlotDirect(pedalName,slotIndex){
+  let pedal=getPedal(pedalName);if(!pedal)return;
+  let c=slotIndex%boardCols,r=Math.floor(slotIndex/boardCols),w=pedal._sizeW,h=pedal._sizeH;
+  if(c+w>boardCols||r+h>boardRows){showToast('Doesn\'t fit here!','error');return;}
+  for(let dr=0;dr<h;dr++)for(let dc=0;dc<w;dc++){let s=(r+dr)*boardCols+(c+dc);if(boardState[s]&&boardState[s]!==pedalName){showToast('Overlap!','error');return;}}
+  for(let[s,nm]of Object.entries(boardState))if(nm===pedalName)delete boardState[parseInt(s)];
+  for(let dr=0;dr<h;dr++)for(let dc=0;dc<w;dc++)boardState[(r+dr)*boardCols+(c+dc)]=pedalName;
+  if(!selectedPedals.has(pedalName))selectedPedals.add(pedalName);
+  activeSlot=null;renderAll();updatePermEstimate();
+}
+
+function placePedalInSlot(pedalName){
+  if(activeSlot===null)return;placePedalInSlotDirect(pedalName,activeSlot);
+}
+
+// Override togglePedal to handle activeSlot placement
+let _origTogglePedal=togglePedal;
+togglePedal=function(name){if(activeSlot!==null)placePedalInSlot(name);else _origTogglePedal(name);};
+
+// =========================================================================
+// RULE ENGINE (JS port of RuleEngine.gd)
+// =========================================================================
+function buildCtx(order,num,items,cols,rows){return{order,num,db:{get_item:n=>getPedal(n)},items,cols:cols||num,rows:rows||1};}
+function evaluateRule(ctx,rule){switch(rule.type){case'position':return evalPos(ctx,rule);case'adjacent':return evalAdj(ctx,rule);case'group_together':return evalGrp(ctx,rule);case'order':return evalOrd(ctx,rule);case'count':return evalCnt(ctx,rule);case'no_adjacent_same':return evalNAS(ctx,rule);}return false;}
+
+function selectNames(ctx,sel,subj=null){let o=[];for(let nm of ctx.items)if(matchesItem(ctx.db.get_item(nm),sel,subj))o.push(nm);return o;}
+function matchesItem(it,sel,subj){if(!it)return false;if(sel.all)return true;if(sel.name!==undefined)return it['Pedal Name']===sel.name;if(sel.tag!==undefined)return(it.tags||[]).includes(sel.tag);if(sel.field!==undefined){let v;if(sel.same_as_subject){if(!subj)return false;v=subj[sel.field];}else v=sel.value;return String(it[sel.field]||'')===String(v||'');}return false;}
+
+function allSlotsOf(ctx,nm){let o=[];for(let i=0;i<ctx.num;i++)if(ctx.order[i]===nm)o.push(i);return o;}
+function neighbors(s,ctx){let cols=ctx.cols,rows=ctx.rows,o=[];if(rows<=1){if(s>0)o.push(s-1);if(s<ctx.num-1)o.push(s+1);return o;}let sc=s%cols,sr=Math.floor(s/cols);if(sc>0)o.push(s-1);if(sc<cols-1)o.push(s+1);if(sr>0)o.push(s-cols);if(sr<rows-1)o.push(s+cols);return o;}
+function whereOk(s,num,rule,ctx={}){let cols=ctx.cols||num,rows=ctx.rows||1,sc=cols>0?s%cols:0,sr=cols>0?Math.floor(s/cols):0;switch(rule.where){case'edge':return sc===0||sc===cols-1;case'end_left':case'first':return sc===0&&sr===0;case'end_right':case'last':return sc===cols-1&&sr===rows-1;case'middle':return sc>0&&sc<cols-1;case'slot':return s===parseInt(rule.slot||-1);case'row_a':return sr===0;case'row_b':return sr===1;case'row_c':return sr===2;case'top':return sr===rows-1;case'bottom':return sr===0;}return false;}
+function regionSlots(num,region,ctx={}){let cols=ctx.cols||num,o=[];switch(region){case'edges':for(let i=0;i<num;i++){let c=cols>0?i%cols:i;if(c===0||c===cols-1)o.push(i);}break;case'middle':for(let i=0;i<num;i++){let c=cols>0?i%cols:i;if(c>0&&c<cols-1)o.push(i);}break;case'left':for(let i=0;i<num;i++)if(cols>0&&(i%cols)<Math.floor(cols/2))o.push(i);break;case'right':for(let i=0;i<num;i++)if(cols>0&&(i%cols)>=Math.floor((cols+1)/2))o.push(i);break;case'row_a':for(let i=0;i<num;i++)if(cols>0&&Math.floor(i/cols)===0)o.push(i);break;case'row_b':for(let i=0;i<num;i++)if(cols>0&&Math.floor(i/cols)===1)o.push(i);break;case'row_c':for(let i=0;i<num;i++)if(cols>0&&Math.floor(i/cols)===2)o.push(i);break;default:for(let i=0;i<num;i++)o.push(i);}return o;}
+function cmpOp(n,op,v){switch(op){case'<=':return n<=v;case'<':return n<v;case'>=':return n>=v;case'>':return n>v;case'==':return n===v;case'!=':return n!==v;}return false;}
+
+function evalPos(ctx,rule){for(let nm of selectNames(ctx,rule.select||{})){let sl=allSlotsOf(ctx,nm);if(sl.length===0)continue;for(let s of sl){let ok=whereOk(s,ctx.num,rule,ctx);if(rule.negate?ok:!ok)return false;}}return true;}
+function evalAdj(ctx,rule){let neg=rule.negate||false;for(let nm of selectNames(ctx,rule.select||{})){let sl=allSlotsOf(ctx,nm);if(sl.length===0)continue;let subj=ctx.db.get_item(nm),found=false;for(let s of sl){for(let ns of neighbors(s,ctx)){let o=ctx.order[ns];if(!o||o===nm)continue;if(matchesItem(ctx.db.get_item(o),rule.to||{},subj))found=true;}}if(neg?found:!found)return false;}return true;}
+function evalGrp(ctx,rule){let nms=selectNames(ctx,rule.select||{});if(nms.length<=1)return true;let sl=[];for(let nm of nms)for(let s of allSlotsOf(ctx,nm))if(!sl.includes(s))sl.push(s);if(sl.length<=1)return true;if((ctx.rows||1)>1)return grpConnected(sl,ctx);sl.sort((a,b)=>a-b);return sl[sl.length-1]-sl[0]===sl.length-1;}
+function grpConnected(sl,ctx){if(sl.length<=1)return true;let ss=new Set(sl),vis=new Set(),q=[sl[0]];vis.add(sl[0]);let cnt=0;while(q.length>0){cnt++;for(let nb of neighbors(q.shift(),ctx)){if(ss.has(nb)&&!vis.has(nb)){vis.add(nb);q.push(nb);}}}return cnt===sl.length;}
+function evalOrd(ctx,rule){let by=rule.by||'',seq=rule.sequence||[],lr=-1;for(let i=0;i<ctx.num;i++){let nm=ctx.order[i];if(!nm)continue;let rk;if(by){let it=ctx.db.get_item(nm);if(!it)continue;rk=seq.indexOf(String(it[by]||''));}else rk=seq.indexOf(nm);if(rk===-1)continue;if(rk<lr)return false;lr=rk;}return true;}
+function evalCnt(ctx,rule){return cmpOp(countN(ctx,rule),rule.op||'<=',parseInt(rule.value||0));}
+function countN(ctx,rule){let n=0;for(let i of regionSlots(ctx.num,rule.region||'all',ctx)){let nm=ctx.order[i];if(!nm)continue;if(matchesItem(ctx.db.get_item(nm),rule.select||{},null))n++;}return n;}
+function evalNAS(ctx,rule){let fd=rule.field||'';for(let i=0;i<ctx.num;i++){let a=ctx.order[i];if(!a)continue;let ia=ctx.db.get_item(a);if(!ia)continue;for(let j of neighbors(i,ctx)){if(j<=i)continue;let b=ctx.order[j];if(!b||b===a)continue;let ib=ctx.db.get_item(b);if(!ib)continue;if(String(ia[fd]||'')===String(ib[fd]||''))return false;}}return true;}
+
+// =========================================================================
+// DESCRIBE
+// =========================================================================
+function describeRule(rule){switch(rule.type){case'position':return`${selText(rule.select||{})} must ${rule.negate?'NOT ':''}be ${whereText(rule)}`;case'adjacent':return`${selText(rule.select||{})} must ${rule.negate?'NOT ':''}sit next to ${selText(rule.to||{})}`;case'group_together':return`All ${selText(rule.select||{})} must be grouped together`;case'order':{let by=rule.by||'',seq=(rule.sequence||[]).join(', ');return by?`${by} order: ${seq}`:`Order: ${seq}`;}case'count':return`${opWord(rule.op||'<=')} ${rule.value||0} ${selText(rule.select||{})} in the ${regionText(rule.region||'all')}`;case'no_adjacent_same':return`No two neighbours share the same ${rule.field||''}`;}return'?';}
+function selText(sel){if(!sel||Object.keys(sel).length===0)return'?';if(sel.all)return'every pedal';if(sel.name!==undefined)return sel.name;if(sel.tag!==undefined)return`${sel.tag} pedals`;if(sel.field!==undefined){if(sel.same_as_subject)return`the same ${sel.field}`;return`${sel.value||''} (${sel.field})`;}return'?';}
+function whereText(rule){switch(rule.where){case'edge':return'on an end';case'end_left':case'first':return'first';case'end_right':case'last':return'last';case'middle':return'in the middle';case'slot':return`in slot ${parseInt(rule.slot||0)+1}`;case'row_a':return'on row A (bottom)';case'row_b':return'on row B (top)';case'row_c':return'on row C';case'top':return'on the top row';case'bottom':return'on the bottom row';}return'?';}
+function opWord(op){switch(op){case'<=':return'At most';case'<':return'Fewer than';case'>=':return'At least';case'>':return'More than';case'==':return'Exactly';case'!=':return'Not';}return op;}
+function regionText(r){switch(r){case'edges':return'end slots';case'middle':return'middle slots';case'left':return'left half';case'right':return'right half';case'row_a':return'row A';case'row_b':return'row B';case'row_c':return'row C';}return'whole board';}
+
+// =========================================================================
+// RULE SUGGESTIONS — pedal-specific (for selected pedals) + general
+// =========================================================================
+function suggestRulesForSelected(){
+  if(selectedForRules.size===0){showToast('Click placed pedals on the board to select them first! (golden border)','error');return;}
+  let totalSlots=boardCols*boardRows,order=Array(totalSlots).fill('');
+  for(let[s,nm]of Object.entries(boardState))order[parseInt(s)]=nm;
+  let items=[...selectedPedals],ctx=buildCtx(order,totalSlots,items,boardCols,boardRows);
+  let sugs=[],existing=new Set(rules.map(r=>JSON.stringify({type:r.type,select:r.select,to:r.to,where:r.where,slot:r.slot,negate:r.negate,field:r.field,by:r.by,sequence:r.sequence,op:r.op,value:r.value,region:r.region})));
+
+  // For each selected pedal, suggest position and adjacency rules
+  for(let nm of selectedForRules){
+    let sl=allSlotsOf(ctx,nm);if(sl.length===0)continue;
+    for(let s of sl){
+      let c=s%boardCols,r=Math.floor(s/boardCols);
+      // Position rules
+      addSug(nm,{type:'position',select:{name:nm},where:'slot',slot:s,description:'',_source:'exact-slot'});
+      if(boardRows>1){let rl=r===0?'row_a':r===1?'row_b':'row_c';addSug(nm,{type:'position',select:{name:nm},where:rl,description:'',_source:'row'});}
+      if(c===0||c===boardCols-1)addSug(nm,{type:'position',select:{name:nm},where:'edge',description:'',_source:'edge'});
+      if(c===0&&r===0)addSug(nm,{type:'position',select:{name:nm},where:'first',description:'',_source:'first'});
+      if(c===boardCols-1&&r===boardRows-1)addSug(nm,{type:'position',select:{name:nm},where:'last',description:'',_source:'last'});
+      // Adjacency
+      for(let ns of neighbors(s,ctx)){
+        let nb=order[ns];if(!nb||nb===nm)continue;
+        addSug(nm,{type:'adjacent',select:{name:nm},to:{name:nb},negate:false,description:'',_source:'adjacent'});
+      }
+    }
+  }
+
+  let added=0;
+  for(let sug of sugs){
+    let key=JSON.stringify({type:sug.type,select:sug.select,to:sug.to,where:sug.where,slot:sug.slot,negate:sug.negate,field:sug.field,by:sug.by,sequence:sug.sequence,op:sug.op,value:sug.value,region:sug.region});
+    if(!existing.has(key)){existing.add(key);rules.push({...sug,_id:ruleIdCounter++,_enabled:false,group:'',secret:false});added++;}
+  }
+  renderRules();updatePermEstimate();
+  showToast(`Added ${added} suggestions for ${selectedForRules.size} pedal(s) — all unchecked`);
+}
+
+function addSug(pedalName,sug){sug._sugPedal=pedalName;sug._sugPedal=pedalName;/*intentional double-set*/if(!sug._sugs)sug._sugs=[];sug._sugs.push(pedalName);}
+// Fix: use a closure array
+let _pendingSugs=[];
+function addSug(pn,sug){sug._sugPedal=pn;_pendingSugs.push(sug);}
+// Override the above stub — collect into _pendingSugs then use in the loop
+suggestRulesForSelected=function(){
+  if(selectedForRules.size===0){showToast('Click placed pedals on the board to select them first! (golden border)','error');return;}
+  // Clear previous unchecked suggestions so the list doesn't flood
+  rules=rules.filter(r=>r._enabled);
+  let totalSlots=boardCols*boardRows,order=Array(totalSlots).fill('');
+  for(let[s,nm]of Object.entries(boardState))order[parseInt(s)]=nm;
+  let items=[...selectedPedals],ctx=buildCtx(order,totalSlots,items,boardCols,boardRows);
+  _pendingSugs=[];
+  let existing=new Set(rules.map(r=>JSON.stringify({type:r.type,select:r.select,to:r.to,where:r.where,slot:r.slot,negate:r.negate,field:r.field,by:r.by,sequence:r.sequence,op:r.op,value:r.value,region:r.region})));
+
+  for(let nm of selectedForRules){
+    let sl=allSlotsOf(ctx,nm);if(sl.length===0)continue;
+    for(let s of sl){
+      let c=s%boardCols,r=Math.floor(s/boardCols);
+      addSug(nm,{type:'position',select:{name:nm},where:'slot',slot:s,description:'',_source:'exact-slot'});
+      if(boardRows>1){let rl=r===0?'row_a':r===1?'row_b':'row_c';addSug(nm,{type:'position',select:{name:nm},where:rl,description:'',_source:'row'});}
+      if(c===0||c===boardCols-1)addSug(nm,{type:'position',select:{name:nm},where:'edge',description:'',_source:'edge'});
+      if(c===0&&r===0)addSug(nm,{type:'position',select:{name:nm},where:'first',description:'',_source:'first'});
+      if(c===boardCols-1&&r===boardRows-1)addSug(nm,{type:'position',select:{name:nm},where:'last',description:'',_source:'last'});
+      for(let ns of neighbors(s,ctx)){let nb=order[ns];if(!nb||nb===nm)continue;addSug(nm,{type:'adjacent',select:{name:nm},to:{name:nb},negate:false,description:'',_source:'adjacent'});}
+    }
+  }
+  let added=0;
+  for(let sug of _pendingSugs){
+    let key=JSON.stringify({type:sug.type,select:sug.select,to:sug.to,where:sug.where,slot:sug.slot,negate:sug.negate,field:sug.field,by:sug.by,sequence:sug.sequence,op:sug.op,value:sug.value,region:sug.region});
+    if(!existing.has(key)){existing.add(key);rules.push({...sug,_id:ruleIdCounter++,_enabled:false,group:'',secret:false});added++;}
+  }
+  renderRules();updatePermEstimate();
+  showToast(`Added ${added} suggestions for ${selectedForRules.size} pedal(s) — all unchecked`);
+};
+
+// General rules: order, count, group_together, no_adjacent_same
+function suggestGeneralRules(){
+  let totalSlots=boardCols*boardRows,order=Array(totalSlots).fill('');
+  for(let[s,nm]of Object.entries(boardState))order[parseInt(s)]=nm;
+  let placedCnt=order.filter(n=>n).length;if(placedCnt===0){showToast('Place pedals on the board first!','error');return;}
+  // Clear previous unchecked suggestions so the list doesn't flood
+  rules=rules.filter(r=>r._enabled);
+  let items=[...selectedPedals],ctx=buildCtx(order,totalSlots,items,boardCols,boardRows);
+  _pendingSugs=[];
+  let existing=new Set(rules.map(r=>JSON.stringify({type:r.type,select:r.select,to:r.to,where:r.where,slot:r.slot,negate:r.negate,field:r.field,by:r.by,sequence:r.sequence,op:r.op,value:r.value,region:r.region})));
+
+  // If pedals are selected, only consider those; otherwise use all placed pedals
+  let hasSelection=selectedForRules.size>0;
+  let scopeFilter=hasSelection?new Set(selectedForRules):null;
+  function inScope(nm){return !scopeFilter||scopeFilter.has(nm);}
+
+  // Group-together — only among selected pedals (if selection active)
+  for(let fd of['Category 1','Category 2','Color','Brand']){
+    let vg={};for(let[s,nm]of Object.entries(boardState)){if(!inScope(nm))continue;let p=getPedal(nm);if(!p)continue;let v=p[fd];if(!v)continue;if(!vg[v])vg[v]=[];vg[v].push(parseInt(s));}
+    for(let[v,sl]of Object.entries(vg)){if(sl.length<=1)continue;let cont=(ctx.rows||1)>1?grpConnected(sl,ctx):(Math.max(...sl)-Math.min(...sl)===sl.length-1);if(cont)addSug('General',{type:'group_together',select:{field:fd,value:v},description:'',_source:'group'});}
+  }
+  // Order — only slots occupied by selected pedals (if selection active)
+  for(let fd of['Category 2','Category 1','Era']){
+    let ss=new Set(),sq=[];for(let i=0;i<totalSlots;i++){let nm=order[i];if(!nm||!inScope(nm))continue;let p=getPedal(nm);if(!p)continue;let v=p[fd];if(!v||ss.has(v))continue;ss.add(v);sq.push(v);}
+    if(sq.length>=2)addSug('General',{type:'order',by:fd,sequence:sq,description:'',_source:'order'});
+  }
+  // Count — only count selected pedals (if selection active)
+  for(let fd of['Category 1','Category 2','Color','Brand','Era']){
+    let cnts={};for(let[s,nm]of Object.entries(boardState)){if(!inScope(nm))continue;let p=getPedal(nm);if(!p)continue;let v=p[fd];if(!v)continue;cnts[v]=(cnts[v]||0)+1;}
+    for(let[v,c]of Object.entries(cnts)){if(c>0)addSug('General',{type:'count',select:{field:fd,value:v},op:'==',value:c,region:'all',description:'',_source:'count'});}
+  }
+  // No-adjacent-same — only check against selected pedals (if selection active)
+  for(let fd of['Color','Brand','Category 2','Era']){
+    let bad=false;for(let i=0;i<totalSlots;i++){let a=order[i];if(!a||!inScope(a))continue;let ia=getPedal(a);if(!ia)continue;for(let j of neighbors(i,ctx)){if(j<=i||!order[j])continue;let b=order[j];if(!inScope(b))continue;let ib=getPedal(b);if(!ib)continue;if(String(ia[fd]||'')===String(ib[fd]||''))bad=true;}}
+    if(!bad)addSug('General',{type:'no_adjacent_same',field:fd,description:'',_source:'no-adjacent-same'});
+  }
+
+  let added=0,selNote=hasSelection?` (scoped to ${selectedForRules.size} selected)`:' (full board)';
+  for(let sug of _pendingSugs){
+    let key=JSON.stringify({type:sug.type,select:sug.select,to:sug.to,where:sug.where,slot:sug.slot,negate:sug.negate,field:sug.field,by:sug.by,sequence:sug.sequence,op:sug.op,value:sug.value,region:sug.region});
+    if(!existing.has(key)){existing.add(key);rules.push({...sug,_id:ruleIdCounter++,_enabled:false,group:'',secret:false});added++;}
+  }
+  renderRules();updatePermEstimate();
+  showToast(`Added ${added} general rule suggestions${selNote} — all unchecked`);
+}
+
+// =========================================================================
+// RENDER RULES — with inline description editing
+// =========================================================================
+function renderRules(){
+  let c=document.getElementById('rule-list');
+  let pedalGroups={},ungrouped={},andGroups={};
+  for(let r of rules){
+    if(r.group){if(!andGroups[r.group])andGroups[r.group]=[];andGroups[r.group].push(r);}
+    else if(r._sugPedal){if(!pedalGroups[r._sugPedal])pedalGroups[r._sugPedal]=[];pedalGroups[r._sugPedal].push(r);}
+    else{if(!ungrouped._other)ungrouped._other=[];ungrouped._other.push(r);}
+  }
+  let h='';
+  for(let pn of Object.keys(pedalGroups).sort()){
+    let ip=pedalImg(pn);h+=`<div class="rule-pedal-group">${ip?`<img src="${ip}" alt="">`:''} ${pn}</div>`;
+    for(let r of pedalGroups[pn])h+=renderRuleCard(r);
+  }
+  if(ungrouped._other&&ungrouped._other.length>0){h+=`<div class="rule-pedal-group">📐 General Rules</div>`;for(let r of ungrouped._other)h+=renderRuleCard(r);}
+  for(let[gid,grs]of Object.entries(andGroups)){h+=`<div class="rule-group-block"><div class="group-label">🔗 AND-Group: ${gid}</div>`;for(let r of grs)h+=renderRuleCard(r);h+=`</div>`;}
+  c.innerHTML=h||'<div class="empty-state">Place pedals on the board, select them, then use "Suggest for Selected" or "General Rules".</div>';
+  updateCounts();
+}
+
+function renderRuleCard(r){
+  let autoDesc=describeRule(r);
+  let hasCustom=r.description&&r.description.trim()!=='';
+  return `<div class="rule-card ${r._enabled?'enabled':''}">
+    <input type="checkbox" class="rule-check" ${r._enabled?'checked':''} onchange="toggleRuleById(${r._id})" title="Enable">
+    <div class="rule-body">
+      <div class="rule-type">${r.type.replace(/_/g,' ')}${r.secret?' 🔒':''}</div>
+      <div class="rule-desc">${autoDesc}</div>
+      ${hasCustom?`<div class="rule-detail" style="color:var(--yellow)">💬 Player sees: "${escAttr(r.description)}"</div>`:''}
+      <input class="rule-desc-edit" value="${escAttr(r.description||'')}" placeholder="Player-facing description…"
+        onchange="updateRuleDesc(${r._id},this.value)" onclick="event.stopPropagation()">
+    </div>
+    <select style="font-size:0.62em;padding:1px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);border-radius:3px;width:54px"
+      onchange="changeRuleGroupById(${r._id},this.value)" title="AND-group" onclick="event.stopPropagation()">
+      <option value="">-</option>${[...Array(10)].map((_,n)=>`<option value="g${n+1}" ${r.group==='g'+(n+1)?'selected':''}>g${n+1}</option>`).join('')}
+    </select>
+    <button class="rule-del" onclick="deleteRuleById(${r._id})" title="Delete">✕</button>
+  </div>`;
+}
+function escAttr(s){return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function updateRuleDesc(id,val){let r=rules.find(r=>r._id===id);if(r){r.description=val;renderRules();}}
+function toggleRuleById(id){let r=rules.find(r=>r._id===id);if(r){r._enabled=!r._enabled;renderRules();updatePermEstimate();}}
+function changeRuleGroupById(id,val){let r=rules.find(r=>r._id===id);if(r){r.group=val;renderRules();}}
+function deleteRuleById(id){rules=rules.filter(r=>r._id!==id);renderRules();updatePermEstimate();}
+
+// =========================================================================
+// RULE FORM — with "Any" pedal option
+// =========================================================================
+document.getElementById('rule-type-select').addEventListener('change',function(){
+  let type=this.value,form=document.getElementById('rule-form');if(!type){form.classList.remove('open');return;}
+  let pedNames=[...selectedPedals].sort(),fields=['Category 1','Category 2','Color','Brand','Era','Bypass','Power'];
+  let anyOpts=fields.map(f=>`<optgroup label="Any ${f}"><option value="any:${f}:Gain">Any Gain</option><option value="any:${f}:Modulation">Any Modulation</option><option value="any:${f}:Delay">Any Delay</option><option value="any:${f}:Dynamic">Any Dynamic</option><option value="any:${f}:Overdrive">Any Overdrive</option></optgroup>`).join('');
+  let h='';
+  switch(type){
+    case'position':h=`<div class="form-row"><label>Pedal</label><select id="rf-sel-type" onchange="onAnySelect('rf-sel-type','rf-sel-val')"><option value="name">By name</option><option value="field">By field</option></select><select id="rf-select-name">${pedNames.map(n=>`<option>${n}</option>`).join('')}</select><span id="rf-sel-val" style="display:none"><select id="rf-select-field">${fields.map(f=>`<option>${f}</option>`).join('')}</select><input id="rf-select-value" placeholder="val" style="width:105px"></span></div><div class="form-row"><label>Where</label><select id="rf-where"><option value="slot">Slot</option><option value="edge">Edge</option><option value="first">First</option><option value="last">Last</option><option value="middle">Middle</option>${boardRows>=2?'<option value="row_a">Row A</option><option value="row_b">Row B</option>':''}${boardRows>=3?'<option value="row_c">Row C</option>':''}<option value="top">Top</option><option value="bottom">Bottom</option></select><span id="rf-slot-wrap"><label>Slot#</label><input id="rf-slot" type="number" value="1" min="1" style="width:63px"></span><label><input type="checkbox" id="rf-negate"> NOT</label></div><div class="form-row"><label>Group</label><select id="rf-group"><option value="">None</option>${[...Array(10)].map((_,n)=>`<option value="g${n+1}">g${n+1}</option>`).join('')}</select><label>Desc</label><input id="rf-desc" placeholder="Player-facing description" style="width:210px"></div><button class="btn-add" onclick="addRuleFromForm('position')">Add</button> <button class="btn-cancel" onclick="closeRuleForm()">Cancel</button>`;break;
+    case'adjacent':h=`<div class="form-row"><label>Subject</label><select id="rf-sel-type" onchange="onAnySelect('rf-sel-type','rf-sel-val')"><option value="name">By name</option><option value="field">By field</option></select><select id="rf-select-name">${pedNames.map(n=>`<option>${n}</option>`).join('')}</select><span id="rf-sel-val" style="display:none"><select id="rf-select-field">${fields.map(f=>`<option>${f}</option>`).join('')}</select><input id="rf-select-value" placeholder="val" style="width:105px"></span></div><div class="form-row"><label>Target</label><select id="rf-to-type" onchange="onAnySelect('rf-to-type','rf-to-val')"><option value="name">By name</option><option value="field">By field</option></select><select id="rf-to-name">${pedNames.map(n=>`<option>${n}</option>`).join('')}</select><span id="rf-to-val" style="display:none"><select id="rf-to-field">${fields.map(f=>`<option>${f}</option>`).join('')}</select><input id="rf-to-value" placeholder="val" style="width:105px"></span></div><div class="form-row"><label><input type="checkbox" id="rf-negate"> Must NOT sit next to</label></div><div class="form-row"><label>Group</label><select id="rf-group"><option value="">None</option>${[...Array(10)].map((_,n)=>`<option value="g${n+1}">g${n+1}</option>`).join('')}</select><label>Desc</label><input id="rf-desc" placeholder="Player-facing description" style="width:210px"></div><button class="btn-add" onclick="addRuleFromForm('adjacent')">Add</button> <button class="btn-cancel" onclick="closeRuleForm()">Cancel</button>`;break;
+    case'group_together':h=`<div class="form-row"><label>Field</label><select id="rf-field">${fields.map(f=>`<option>${f}</option>`).join('')}</select><label>Value</label><input id="rf-value" placeholder="e.g. Gain" style="width:150px"></div><div class="form-row"><label>Group</label><select id="rf-group"><option value="">None</option>${[...Array(10)].map((_,n)=>`<option value="g${n+1}">g${n+1}</option>`).join('')}</select><label>Desc</label><input id="rf-desc" placeholder="Player-facing description" style="width:210px"></div><button class="btn-add" onclick="addRuleFromForm('group_together')">Add</button> <button class="btn-cancel" onclick="closeRuleForm()">Cancel</button>`;break;
+    case'order':h=`<div class="form-row"><label>Order by</label><select id="rf-by">${fields.map(f=>`<option>${f}</option>`).join('')}</select></div><div class="form-row"><label>Sequence</label><input id="rf-sequence" placeholder="Gain; Modulation; Delay" style="width:330px"><span style="font-size:0.7em;color:var(--text-dim)">; separated</span></div><div class="form-row"><label>Group</label><select id="rf-group"><option value="">None</option>${[...Array(10)].map((_,n)=>`<option value="g${n+1}">g${n+1}</option>`).join('')}</select><label>Desc</label><input id="rf-desc" placeholder="Player-facing description" style="width:210px"></div><button class="btn-add" onclick="addRuleFromForm('order')">Add</button> <button class="btn-cancel" onclick="closeRuleForm()">Cancel</button>`;break;
+    case'count':h=`<div class="form-row"><label>Field</label><select id="rf-field">${fields.map(f=>`<option>${f}</option>`).join('')}</select><label>Value</label><input id="rf-value" placeholder="e.g. Green" style="width:150px"></div><div class="form-row"><label>Op</label><select id="rf-op"><option value="==">Exactly</option><option value="<=">At most</option><option value="<">Fewer than</option><option value=">=">At least</option><option value=">">More than</option><option value="!=">Not</option></select><label>Count</label><input id="rf-count" type="number" value="0" style="width:83px"></div><div class="form-row"><label>Region</label><select id="rf-region"><option value="all">Whole board</option><option value="edges">Edges</option><option value="middle">Middle</option><option value="left">Left half</option><option value="right">Right half</option>${boardRows>=2?'<option value="row_a">Row A</option><option value="row_b">Row B</option>':''}</select></div><div class="form-row"><label>Group</label><select id="rf-group"><option value="">None</option>${[...Array(10)].map((_,n)=>`<option value="g${n+1}">g${n+1}</option>`).join('')}</select><label>Desc</label><input id="rf-desc" placeholder="Player-facing description" style="width:210px"></div><button class="btn-add" onclick="addRuleFromForm('count')">Add</button> <button class="btn-cancel" onclick="closeRuleForm()">Cancel</button>`;break;
+    case'no_adjacent_same':h=`<div class="form-row"><label>Field</label><select id="rf-field">${fields.map(f=>`<option>${f}</option>`).join('')}</select></div><div class="form-row"><label>Group</label><select id="rf-group"><option value="">None</option>${[...Array(10)].map((_,n)=>`<option value="g${n+1}">g${n+1}</option>`).join('')}</select><label>Desc</label><input id="rf-desc" placeholder="Player-facing description" style="width:210px"></div><button class="btn-add" onclick="addRuleFromForm('no_adjacent_same')">Add</button> <button class="btn-cancel" onclick="closeRuleForm()">Cancel</button>`;break;
+  }
+  form.innerHTML=h;form.classList.add('open');this.value='';
+});
+
+function onAnySelect(typeId,valId){
+  let t=document.getElementById(typeId).value,v=document.getElementById(valId);
+  if(v)v.style.display=t==='field'?'inline':'none';
+  let nameSel=typeId==='rf-sel-type'?document.getElementById('rf-select-name'):document.getElementById('rf-to-name');
+  if(nameSel)nameSel.style.display=t==='field'?'none':'inline';
+}
+
+function closeRuleForm(){document.getElementById('rule-form').classList.remove('open');}
+function getVal(id){let e=document.getElementById(id);return e?e.value:'';}
+function getCheck(id){let e=document.getElementById(id);return e?e.checked:false;}
+
+function addRuleFromForm(type){
+  let r={type,_id:ruleIdCounter++,_enabled:true,group:getVal('rf-group'),description:getVal('rf-desc')||'',secret:document.getElementById('secret-rule-check')?.checked||false,_sugPedal:null};
+  switch(type){
+    case'position':{
+      let selType=getVal('rf-sel-type'),nm=getVal('rf-select-name'),fd=getVal('rf-select-field'),fv=getVal('rf-select-value');
+      r.select=(selType==='field'&&fd&&fv)?{field:fd,value:fv}:{name:nm};
+      r.where=getVal('rf-where');if(r.where==='slot')r.slot=parseInt(getVal('rf-slot')||1)-1;r.negate=getCheck('rf-negate');
+      if(selType!=='field'&&nm)r._sugPedal=nm;break;
+    }
+    case'adjacent':{
+      let st=getVal('rf-sel-type'),nm=getVal('rf-select-name'),fd=getVal('rf-select-field'),fv=getVal('rf-select-value');
+      r.select=(st==='field'&&fd&&fv)?{field:fd,value:fv}:{name:nm};
+      let tt=getVal('rf-to-type'),tn=getVal('rf-to-name'),tf=getVal('rf-to-field'),tv=getVal('rf-to-value');
+      r.to=(tt==='field'&&tf&&tv)?{field:tf,value:tv}:{name:tn};
+      r.negate=getCheck('rf-negate');if(st!=='field'&&nm)r._sugPedal=nm;break;
+    }
+    case'group_together':r.select={field:getVal('rf-field'),value:getVal('rf-value')};break;
+    case'order':r.by=getVal('rf-by');r.sequence=getVal('rf-sequence').split(';').map(s=>s.trim()).filter(Boolean);break;
+    case'count':r.select={field:getVal('rf-field'),value:getVal('rf-value')};r.op=getVal('rf-op');r.value=parseInt(getVal('rf-count')||'0');r.region=getVal('rf-region');break;
+    case'no_adjacent_same':r.field=getVal('rf-field');break;
+  }
+  rules.push(r);closeRuleForm();renderRules();updatePermEstimate();
+}
+
+// =========================================================================
+// PERMUTATION ESTIMATE (handles multi-slot)
+// =========================================================================
+function updatePermEstimate(){
+  let totalSlots=boardCols*boardRows,avail=[...selectedPedals];
+  let totalUnits=avail.reduce((sum,n)=>{let p=getPedal(n);return sum+(p?p._slotUnits:1);},0);
+  if(totalUnits<totalSlots){
+    document.getElementById('perm-estimate').innerHTML=`<span class="stat-badge bad">Need ${totalSlots} slot-units (available pedals sum to ${totalUnits})</span>`;
+  }else{
+    // Count combinations roughly
+    let singles=avail.filter(n=>{let p=getPedal(n);return p&&p._slotUnits===1;}).length;
+    let multis=avail.filter(n=>{let p=getPedal(n);return p&&p._slotUnits>1;});
+    // Just warn for multi-slot presence — exact counting is complex
+    if(multis.length>0&&totalSlots<=10){
+      document.getElementById('perm-estimate').innerHTML=`<span class="stat-badge good">Multi-slot pedals present — test will enumerate valid packings</span>`;
+    }else if(singles>=totalSlots){
+      let est=1;for(let i=0;i<totalSlots;i++)est*=(singles-i);
+      if(est>5000000)document.getElementById('perm-estimate').innerHTML=`<span class="stat-badge warn">~${est.toExponential(0)} permutations</span>`;
+      else if(est>500000)document.getElementById('perm-estimate').innerHTML=`<span class="stat-badge warn">~${est.toLocaleString()} permutations</span>`;
+      else document.getElementById('perm-estimate').innerHTML=`<span class="stat-badge good">~${est.toLocaleString()} permutations</span>`;
+    }
+  }
+}
+
+// =========================================================================
+// TEST: MULTI-SLOT SUPPORT
+// =========================================================================
+function runTest(){
+  let totalSlots=boardCols*boardRows,avail=[...selectedPedals];
+  let enabledRules=rules.filter(r=>r._enabled);
+  if(enabledRules.length===0){showToast('Enable at least one rule!','error');return;}
+
+  // Check total slot units
+  let totalUnits=avail.reduce((s,n)=>{let p=getPedal(n);return s+(p?p._slotUnits:1);},0);
+  if(totalUnits<totalSlots){showToast(`Pedals sum to ${totalUnits} slot-units — need ${totalSlots}!`,'error');return;}
+
+  document.getElementById('btn-test').disabled=true;
+  document.getElementById('btn-test').textContent='⏳ Generating...';
+
+  setTimeout(()=>{
+    try{
+      let results=generateAllArrangements(avail,boardCols,boardRows);
+      let passing=[],total=results.length;
+      for(let perm of results){
+        let order=[...perm];while(order.length<totalSlots)order.push('');
+        let ctx=buildCtx(order,totalSlots,avail,boardCols,boardRows);
+        let ok=true;for(let r of enabledRules){if(!evaluateRule(ctx,r)){ok=false;break;}}
+        if(ok)passing.push(perm);
+      }
+      displayResults(total,passing);
+    }catch(e){showToast('Error: '+e.message,'error');console.error(e);}
+    document.getElementById('btn-test').disabled=false;
+    document.getElementById('btn-test').textContent='🧪 Test All Combinations';
+  },60);
+}
+
+// Generate all arrangements considering multi-slot pedals
+function generateAllArrangements(pedalNames,cols,rows){
+  let totalSlots=cols*rows;
+  // Map pedals to {name, w, h}
+  let pedals=pedalNames.map(n=>{let p=getPedal(n);return{name:n,w:p._sizeW,h:p._sizeH};});
+
+  // Step 1: find all multisets summing to totalSlots
+  let combos=[];
+  function findCombos(idx,remaining,current){
+    if(remaining===0){combos.push([...current]);return;}
+    if(idx>=pedals.length||remaining<0)return;
+    let p=pedals[idx],units=p.w*p.h;
+    // Skip exact duplicate names
+    if(current.length===0||current[current.length-1]!==p.name||true){
+      // Take one
+      if(units<=remaining){current.push(p);findCombos(idx+1,remaining-units,current);current.pop();}
+      // Skip
+      findCombos(idx+1,remaining,current);
+    }
+  }
+  // Actually handle duplicates properly:
+  // For each pedal, we can take it at most once (since it's a unique physical pedal)
+  findCombos=(idx,rem,cur)=>{
+    if(rem===0){combos.push([...cur]);return;}
+    if(idx>=pedals.length||rem<0)return;
+    let p=pedals[idx],units=p.w*p.h;
+    // Take this pedal
+    if(units<=rem){cur.push(p);findCombos(idx+1,rem-units,cur);cur.pop();}
+    // Skip this pedal
+    findCombos(idx+1,rem,cur);
+  };
+  findCombos(0,totalSlots,[]);
+
+  // Step 2: for each combo, find all valid placements
+  let results=[];
+  for(let combo of combos){
+    let board=Array(totalSlots).fill('');
+    placeRecursive(combo,0,board,cols,rows,results);
+  }
+  return results;
+}
+
+function placeRecursive(pedals,idx,board,cols,rows,results){
+  if(idx>=pedals.length){
+    results.push([...board]);
+    return;
+  }
+  let p=pedals[idx],w=p.w,h=p.h,totalSlots=cols*rows;
+  // Find all valid anchor positions
+  for(let r=0;r<=rows-h;r++){
+    for(let c=0;c<=cols-w;c++){
+      // Check if all required slots are free
+      let ok=true;
+      for(let dr=0;dr<h&&ok;dr++)for(let dc=0;dc<w&&ok;dc++){
+        let s=(r+dr)*cols+(c+dc);
+        if(board[s]!=='')ok=false;
+      }
+      if(!ok)continue;
+      // Place
+      for(let dr=0;dr<h;dr++)for(let dc=0;dc<w;dc++)board[(r+dr)*cols+(c+dc)]=p.name;
+      placeRecursive(pedals,idx+1,board,cols,rows,results);
+      // Unplace
+      for(let dr=0;dr<h;dr++)for(let dc=0;dc<w;dc++)board[(r+dr)*cols+(c+dc)]='';
+    }
+  }
+}
+
+function displayResults(total,passing){
+  let sec=document.getElementById('results-section'),grid=document.getElementById('results-grid'),title=document.getElementById('results-title');
+  sec.classList.add('open');
+  title.innerHTML=`Results: <span class="stat-badge good">${passing.length} pass</span> <span class="stat-badge ${passing.length===0?'bad':'warn'}">${total-passing.length} fail</span> of <strong>${total.toLocaleString()}</strong>`;
+  let limit=100,disp=passing.slice(0,limit);
+  grid.innerHTML=disp.map(perm=>{
+    let cells='';
+    for(let vr=boardRows-1;vr>=0;vr--)for(let c=boardCols-1;c>=0;c--){
+      let idx=vr*boardCols+c,nm=perm[idx]||'',ip=nm?pedalImg(nm):'';
+      cells+=`<div class="mini-slot" title="${nm||'empty'}">${ip?`<img src="${ip}" alt="">`:''}</div>`;
+    }
+    return`<div class="mini-board" style="grid-template-columns:repeat(${boardCols},30px);grid-template-rows:repeat(${boardRows},30px)" title="${perm.join(', ')}">${cells}</div>`;
+  }).join('');
+  if(passing.length>limit)grid.innerHTML+=`<div style="padding:8px;color:var(--text-dim)">... and ${passing.length-limit} more</div>`;
+  if(passing.length===0)grid.innerHTML='<div style="padding:18px;color:var(--red)">No arrangements satisfy all checked rules. Try removing or relaxing some rules.</div>';
+  sec.scrollIntoView({behavior:'smooth'});
+}
+function closeResults(){document.getElementById('results-section').classList.remove('open');}
+
+// =========================================================================
+// UTILS
+// =========================================================================
+function clearBoard(){boardState={};activeSlot=null;selectedForRules=new Set();renderAll();}
+document.getElementById('pedal-search').addEventListener('input',renderPedalList);
+
+function showToast(msg,type=''){
+  let t=document.getElementById('toast');t.textContent=msg;t.className='toast show '+type;
+  clearTimeout(t._t);t._t=setTimeout(()=>{t.className='toast';},2800);
+}
+
+// Init
+init();
+</script>
+</body>
+</html>
